@@ -2017,6 +2017,7 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
  "tracing",
  "ulid",
 ]
@@ -2282,6 +2283,7 @@ dependencies = [
  "nexmind-event-bus",
  "nexmind-memory",
  "nexmind-model-router",
+ "nexmind-scheduler",
  "nexmind-security",
  "nexmind-skill-registry",
  "nexmind-storage",

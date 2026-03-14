@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
-use crate::{NodeType, WorkflowDefinition, WorkflowEngine, WorkflowError, WorkflowNode};
+use crate::{NodeType, WorkflowDefinition, WorkflowEngine, WorkflowError, WorkflowExecutor, WorkflowNode};
 
 /// A DAG-based workflow execution engine.
 ///
@@ -12,6 +12,7 @@ use crate::{NodeType, WorkflowDefinition, WorkflowEngine, WorkflowError, Workflo
 /// between nodes.
 pub struct DagWorkflowEngine {
     workflows: HashMap<String, WorkflowDefinition>,
+    executor: Option<std::sync::Arc<dyn WorkflowExecutor>>,
 }
 
 impl DagWorkflowEngine {
@@ -19,6 +20,15 @@ impl DagWorkflowEngine {
     pub fn new() -> Self {
         Self {
             workflows: HashMap::new(),
+            executor: None,
+        }
+    }
+
+    /// Create an engine with a real executor for tool/agent nodes.
+    pub fn with_executor(executor: std::sync::Arc<dyn WorkflowExecutor>) -> Self {
+        Self {
+            workflows: HashMap::new(),
+            executor: Some(executor),
         }
     }
 
@@ -144,12 +154,13 @@ impl DagWorkflowEngine {
 
     /// Execute a single workflow node and return its output value.
     async fn execute_node(
+        &self,
         node: &WorkflowNode,
         node_outputs: &HashMap<String, Value>,
     ) -> Result<Value, WorkflowError> {
         match node.node_type {
-            NodeType::Tool => Self::execute_tool_node(node).await,
-            NodeType::Agent => Self::execute_agent_node(node).await,
+            NodeType::Tool => self.execute_tool_node(node).await,
+            NodeType::Agent => self.execute_agent_node(node).await,
             NodeType::Condition => Self::execute_condition_node(node, node_outputs).await,
             NodeType::Timer => Self::execute_timer_node(node).await,
             NodeType::Transform => Self::execute_transform_node(node, node_outputs).await,
@@ -157,42 +168,75 @@ impl DagWorkflowEngine {
         }
     }
 
-    /// Tool node: extract `tool_name` and `arguments` from config and return a
-    /// placeholder result.  Real execution would delegate to the tool-runtime
-    /// crate.
-    async fn execute_tool_node(node: &WorkflowNode) -> Result<Value, WorkflowError> {
+    /// Tool node: execute via the WorkflowExecutor if available, otherwise placeholder.
+    async fn execute_tool_node(&self, node: &WorkflowNode) -> Result<Value, WorkflowError> {
         let tool_name = node.config.get("tool_name")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown_tool");
         let arguments = node.config.get("arguments")
             .cloned()
             .unwrap_or(Value::Null);
+        let workspace_id = node.config.get("workspace_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
 
-        info!(node_id = %node.id, tool = %tool_name, "executing tool node (placeholder)");
-
-        Ok(json!({
-            "status": "completed",
-            "node_id": node.id,
-            "tool_name": tool_name,
-            "arguments": arguments,
-            "result": format!("placeholder result from tool '{}'", tool_name),
-        }))
+        if let Some(ref executor) = self.executor {
+            info!(node_id = %node.id, tool = %tool_name, "executing tool node");
+            let result = executor
+                .execute_tool(tool_name, &arguments, workspace_id)
+                .await
+                .map_err(|e| WorkflowError::ExecutionError(format!("tool '{}': {}", tool_name, e)))?;
+            Ok(json!({
+                "status": "completed",
+                "node_id": node.id,
+                "tool_name": tool_name,
+                "result": result,
+            }))
+        } else {
+            info!(node_id = %node.id, tool = %tool_name, "executing tool node (no executor)");
+            Ok(json!({
+                "status": "completed",
+                "node_id": node.id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "result": format!("placeholder result from tool '{}'", tool_name),
+            }))
+        }
     }
 
-    /// Agent node: extract `agent_id` from config and return a placeholder.
-    async fn execute_agent_node(node: &WorkflowNode) -> Result<Value, WorkflowError> {
+    /// Agent node: execute via the WorkflowExecutor if available, otherwise placeholder.
+    async fn execute_agent_node(&self, node: &WorkflowNode) -> Result<Value, WorkflowError> {
         let agent_id = node.config.get("agent_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown_agent");
+        let input = node.config.get("input")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Execute your task.");
+        let workspace_id = node.config.get("workspace_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
 
-        info!(node_id = %node.id, agent = %agent_id, "executing agent node (placeholder)");
-
-        Ok(json!({
-            "status": "completed",
-            "node_id": node.id,
-            "agent_id": agent_id,
-            "result": format!("placeholder result from agent '{}'", agent_id),
-        }))
+        if let Some(ref executor) = self.executor {
+            info!(node_id = %node.id, agent = %agent_id, "executing agent node");
+            let result = executor
+                .execute_agent(agent_id, input, workspace_id)
+                .await
+                .map_err(|e| WorkflowError::ExecutionError(format!("agent '{}': {}", agent_id, e)))?;
+            Ok(json!({
+                "status": "completed",
+                "node_id": node.id,
+                "agent_id": agent_id,
+                "result": result,
+            }))
+        } else {
+            info!(node_id = %node.id, agent = %agent_id, "executing agent node (no executor)");
+            Ok(json!({
+                "status": "completed",
+                "node_id": node.id,
+                "agent_id": agent_id,
+                "result": format!("placeholder result from agent '{}'", agent_id),
+            }))
+        }
     }
 
     /// Condition node: evaluate a simple condition from config.
@@ -358,7 +402,7 @@ impl WorkflowEngine for DagWorkflowEngine {
 
             debug!(node_id = %node_id, node_type = ?node.node_type, "executing node");
 
-            let output = Self::execute_node(node, &node_outputs).await?;
+            let output = self.execute_node(node, &node_outputs).await?;
             node_outputs.insert(node_id.clone(), output.clone());
             last_output = output;
 

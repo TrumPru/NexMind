@@ -78,6 +78,8 @@ pub struct AgentRuntime {
     tool_registry: Option<Arc<ToolRegistry>>,
     approval_manager: Option<Arc<crate::approval::ApprovalManager>>,
     cost_tracker: Option<Arc<crate::cost::CostTracker>>,
+    /// Active run cancellation tokens, keyed by run_id.
+    active_runs: Arc<std::sync::Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>>,
 }
 
 impl AgentRuntime {
@@ -94,6 +96,7 @@ impl AgentRuntime {
             tool_registry: None,
             approval_manager: None,
             cost_tracker: None,
+            active_runs: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -117,6 +120,17 @@ impl AgentRuntime {
         self
     }
 
+    /// Cancel a running agent task by run_id. Returns true if found and cancelled.
+    pub fn cancel_run(&self, run_id: &str) -> bool {
+        if let Ok(runs) = self.active_runs.lock() {
+            if let Some(token) = runs.get(run_id) {
+                token.cancel();
+                return true;
+            }
+        }
+        false
+    }
+
     /// Run an agent to completion with Think→Plan→Act→Reflect loop.
     pub async fn run(
         &self,
@@ -131,6 +145,12 @@ impl AgentRuntime {
         let mut reflections: Vec<String> = Vec::new();
         let mut tool_calls_since_reflection: u32 = 0;
         let mut consecutive_errors: u32 = 0;
+
+        // Register cancellation token for this run
+        let cancel_token = tokio_util::sync::CancellationToken::new();
+        if let Ok(mut runs) = self.active_runs.lock() {
+            runs.insert(context.run_id.clone(), cancel_token.clone());
+        }
 
         info!(
             agent_id = %agent.id,
@@ -317,6 +337,15 @@ impl AgentRuntime {
         loop {
             iterations += 1;
 
+            // Check for cancellation
+            if cancel_token.is_cancelled() {
+                info!(agent_id = %agent.id, run_id = %context.run_id, "run cancelled");
+                state = AgentState::Failed {
+                    error: "cancelled by user".into(),
+                };
+                break;
+            }
+
             if iterations > agent.execution_policy.max_iterations {
                 warn!(
                     agent_id = %agent.id,
@@ -496,11 +525,21 @@ impl AgentRuntime {
 
                         messages.push(response_msg.clone());
 
-                        // Execute tool calls
-                        for tc in tool_calls {
-                            let tool_result_str =
-                                self.execute_tool_call(&tc.name, &tc.arguments, agent, &context).await;
+                        // Execute tool calls in parallel for better performance
+                        let mut tool_results = Vec::with_capacity(tool_calls.len());
+                        if tool_calls.len() > 1 {
+                            let futs: Vec<_> = tool_calls.iter().map(|tc| {
+                                self.execute_tool_call(&tc.name, &tc.arguments, agent, &context)
+                            }).collect();
+                            tool_results = futures::future::join_all(futs).await;
+                        } else {
+                            for tc in tool_calls.iter() {
+                                let r = self.execute_tool_call(&tc.name, &tc.arguments, agent, &context).await;
+                                tool_results.push(r);
+                            }
+                        }
 
+                        for (tc, tool_result_str) in tool_calls.iter().zip(tool_results) {
                             // Track errors for reflection
                             if tool_result_str.starts_with("Error:") {
                                 consecutive_errors += 1;
@@ -703,6 +742,11 @@ impl AgentRuntime {
             facts = extracted_facts.len(),
             "agent run completed"
         );
+
+        // Clean up cancellation token
+        if let Ok(mut runs) = self.active_runs.lock() {
+            runs.remove(&context.run_id);
+        }
 
         Ok(AgentRunResult {
             run_id: context.run_id,

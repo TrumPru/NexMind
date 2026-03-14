@@ -55,6 +55,15 @@ pub enum WorkflowError {
     ExecutionError(String),
 }
 
+/// Callback for executing tools and agents within workflow nodes.
+#[async_trait::async_trait]
+pub trait WorkflowExecutor: Send + Sync {
+    /// Execute a tool by name with given arguments. Returns the tool output as JSON.
+    async fn execute_tool(&self, tool_name: &str, arguments: &Value, workspace_id: &str) -> Result<Value, String>;
+    /// Execute an agent by id with given input. Returns the agent response as JSON.
+    async fn execute_agent(&self, agent_id: &str, input: &str, workspace_id: &str) -> Result<Value, String>;
+}
+
 /// Workflow engine trait — executes DAG-based workflows.
 #[async_trait::async_trait]
 pub trait WorkflowEngine: Send + Sync {

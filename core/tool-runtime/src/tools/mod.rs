@@ -11,6 +11,8 @@ pub mod notify;
 pub mod code_exec;
 pub mod delegate;
 pub mod db_query;
+pub mod goal_tracker;
+pub mod schedule_task;
 #[cfg(feature = "browser")]
 pub mod browser;
 #[cfg(feature = "email")]
@@ -31,6 +33,8 @@ pub use notify::NotifyTool;
 pub use code_exec::CodeExecTool;
 pub use delegate::DelegateTool;
 pub use db_query::DbQueryTool;
+pub use goal_tracker::GoalTrackerTool;
+pub use schedule_task::ScheduleTaskTool;
 #[cfg(feature = "browser")]
 pub use browser::manager::{BrowserConfig, BrowserManager, SharedBrowserManager};
 #[cfg(feature = "browser")]

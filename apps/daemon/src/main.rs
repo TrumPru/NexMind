@@ -183,9 +183,51 @@ impl NexMind for NexMindService {
 
     async fn create_agent(
         &self,
-        _request: Request<AgentDefinition>,
+        request: Request<AgentDefinition>,
     ) -> Result<Response<AgentId>, Status> {
-        Err(Status::unimplemented("not yet implemented"))
+        let req = request.into_inner();
+
+        // If definition_json is provided, parse the full definition from it
+        let def = if !req.definition_json.is_empty() {
+            serde_json::from_str::<nexmind_agent_engine::definition::AgentDefinition>(&req.definition_json)
+                .map_err(|e| Status::invalid_argument(format!("Invalid definition JSON: {}", e)))?
+        } else {
+            // Build a definition from individual fields
+            let id = if req.id.is_empty() {
+                format!("agt_{}", ulid::Ulid::new())
+            } else {
+                req.id
+            };
+            let workspace_id = if req.workspace_id.is_empty() {
+                "default".to_string()
+            } else {
+                req.workspace_id
+            };
+            nexmind_agent_engine::definition::AgentDefinition {
+                id,
+                name: if req.name.is_empty() { "Custom Agent".into() } else { req.name },
+                version: 1,
+                description: None,
+                system_prompt: "You are a helpful AI assistant.".into(),
+                model: nexmind_agent_engine::definition::ModelConfig::default(),
+                tools: vec![],
+                memory_policy: nexmind_agent_engine::definition::MemoryPolicy::default(),
+                execution_policy: nexmind_agent_engine::definition::ExecutionPolicy::default(),
+                budget: nexmind_agent_engine::definition::BudgetPolicy::default(),
+                trust_level: nexmind_agent_engine::definition::TrustLevel::Standard,
+                permissions: vec![],
+                schedule: None,
+                tags: vec![],
+                workspace_id,
+            }
+        };
+
+        let id = def.id.clone();
+        self.agent_registry
+            .create(&def)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(Response::new(AgentId { id }))
     }
 
     async fn list_tasks(
@@ -205,9 +247,21 @@ impl NexMind for NexMindService {
 
     async fn cancel_task(
         &self,
-        _request: Request<TaskId>,
+        request: Request<TaskId>,
     ) -> Result<Response<CancelResult>, Status> {
-        Err(Status::unimplemented("not yet implemented"))
+        let task_id = request.into_inner().id;
+
+        // Attempt to cancel via the runtime's cancellation mechanism
+        let cancelled = self.agent_runtime.cancel_run(&task_id);
+
+        Ok(Response::new(CancelResult {
+            success: cancelled,
+            message: if cancelled {
+                format!("Task {} cancelled", task_id)
+            } else {
+                format!("Task {} not found or already completed", task_id)
+            },
+        }))
     }
 
     async fn list_pending_approvals(
@@ -423,6 +477,8 @@ fn init_tool_registry(
     audit: Arc<nexmind_security::AuditLogger>,
     memory_store: Arc<nexmind_memory::MemoryStoreImpl>,
     workspace_path: &std::path::Path,
+    db: Arc<nexmind_storage::Database>,
+    scheduler: Arc<nexmind_scheduler::SchedulerImpl>,
 ) -> nexmind_tool_runtime::ToolRegistry {
     use nexmind_tool_runtime::tools::*;
 
@@ -436,6 +492,13 @@ fn init_tool_registry(
     registry.register(Box::new(HttpFetchTool));
     registry.register(Box::new(ShellExecTool));
     registry.register(Box::new(SendMessageTool));
+    registry.register(Box::new(NotifyTool));
+    registry.register(Box::new(CodeExecTool));
+    registry.register(Box::new(DelegateTool));
+    registry.register(Box::new(DbQueryTool));
+    registry.register(Box::new(GenerateToolTool));
+    registry.register(Box::new(ScheduleTaskTool::new(scheduler)));
+    registry.register(Box::new(GoalTrackerTool::new(db)));
 
     // Email tools (if configured via env vars)
     if let Some(email_config) = EmailConfig::from_env() {
@@ -545,6 +608,10 @@ async fn main() -> Result<()> {
     let audit = Arc::new(nexmind_security::AuditLogger::new(db.clone(), hmac_key));
     info!("audit logger initialized");
 
+    // Initialize scheduler (needed by tool registry)
+    let scheduler = Arc::new(nexmind_scheduler::SchedulerImpl::new(db.clone()));
+    info!("scheduler initialized");
+
     // Initialize tool registry
     let workspace_path = std::path::PathBuf::from(&args.workspace_dir);
     let tool_registry = Arc::new(init_tool_registry(
@@ -552,6 +619,8 @@ async fn main() -> Result<()> {
         audit,
         memory_store.clone(),
         &workspace_path,
+        db.clone(),
+        scheduler.clone(),
     ));
 
     // Initialize agent registry and create default agent
@@ -634,10 +703,6 @@ async fn main() -> Result<()> {
         "skill registry initialized"
     );
 
-    // ── Initialize Scheduler ────────────────────────────────────────
-    let scheduler = Arc::new(nexmind_scheduler::SchedulerImpl::new(db.clone()));
-    info!("scheduler initialized");
-
     // ── Initialize Message Router + Telegram Connector ──────────────
     let mut message_router = router::MessageRouter::new(
         agent_runtime.clone(),
@@ -718,6 +783,7 @@ async fn main() -> Result<()> {
     let http_state = Arc::new(http_api::AppState {
         db: db.clone(),
         agent_registry: agent_registry.clone(),
+        agent_runtime: agent_runtime.clone(),
         approval_manager: approval_manager.clone(),
         cost_tracker: cost_tracker.clone(),
         dashboard_token,
@@ -726,6 +792,8 @@ async fn main() -> Result<()> {
         skill_registry: skill_registry.clone(),
         memory_store: memory_store.clone(),
         model_router: model_router.clone(),
+        session_id: session_id.clone(),
+        workspace_path: workspace_path.clone(),
     });
 
     let http_router = http_api::build_router(http_state);

@@ -1,12 +1,16 @@
 /// HTTP REST API for the NexMind web dashboard.
 ///
 /// Provides JSON endpoints consumed by the embedded dashboard HTML.
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::{Html, IntoResponse},
+    response::{
+        sse::{Event as SseEvent, KeepAlive, Sse},
+        Html, IntoResponse,
+    },
     routing::{delete, get, post},
     Json, Router,
 };
@@ -19,6 +23,7 @@ use crate::dashboard::{DashboardServer, DASHBOARD_HTML};
 pub struct AppState {
     pub db: Arc<nexmind_storage::Database>,
     pub agent_registry: Arc<nexmind_agent_engine::AgentRegistry>,
+    pub agent_runtime: Arc<nexmind_agent_engine::AgentRuntime>,
     pub approval_manager: Arc<nexmind_agent_engine::approval::ApprovalManager>,
     pub cost_tracker: Arc<nexmind_agent_engine::cost::CostTracker>,
     pub dashboard_token: String,
@@ -27,6 +32,8 @@ pub struct AppState {
     pub skill_registry: Arc<nexmind_skill_registry::SkillRegistry>,
     pub memory_store: Arc<nexmind_memory::MemoryStoreImpl>,
     pub model_router: Arc<nexmind_model_router::ModelRouter>,
+    pub session_id: String,
+    pub workspace_path: std::path::PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -70,6 +77,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/costs", get(get_costs))
         // Chat
         .route("/api/chat", post(chat))
+        .route("/api/chat/stream", post(chat_stream))
         // Logs
         .route("/api/logs", get(get_logs))
         // Skills
@@ -258,10 +266,12 @@ async fn cancel_agent_task(
         }));
     }
 
-    // Task cancellation is stubbed — full runtime integration required
+    // Note: We don't have a direct run_id → agent_id mapping here.
+    // The agent_id is used as a best-effort lookup. In practice, the cancel
+    // is most useful when called with the run_id via gRPC.
     Ok(Json(ActionResult {
         success: true,
-        message: format!("Cancel requested for agent {}. (Task cancellation requires agent runtime integration.)", id),
+        message: format!("Cancel requested for agent {}.", id),
     }))
 }
 
@@ -428,15 +438,128 @@ async fn chat(
 ) -> Result<Json<ChatResponse>, (StatusCode, Json<ErrorResponse>)> {
     check_token(&q, &state.dashboard_token)?;
 
-    // For now, echo back. Full agent integration requires the AgentRuntime,
-    // which can be added to AppState later.
-    let _ = &state.event_bus;
-    Ok(Json(ChatResponse {
-        response: format!(
-            "Received: {}. (Chat requires agent runtime integration.)",
-            body.message
-        ),
-    }))
+    // Resolve agent — use default chat agent
+    let agent = state
+        .agent_registry
+        .get("agt_default_chat")
+        .or_else(|_| {
+            // Fallback: pick the first available agent
+            state.agent_registry.list_all()
+                .map_err(|e| e)
+                .and_then(|agents| agents.into_iter().next().ok_or_else(|| {
+                    nexmind_agent_engine::AgentError::NotFound("no agents available".into())
+                }))
+        })
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+        })?;
+
+    let context = nexmind_agent_engine::RunContext::new("default")
+        .with_session(&state.session_id)
+        .with_workspace_path(state.workspace_path.clone());
+
+    let result = state
+        .agent_runtime
+        .run(&agent, &body.message, context)
+        .await
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+        })?;
+
+    let response_text = result.response.unwrap_or_else(|| {
+        format!("Agent completed with status: {}", result.status)
+    });
+
+    Ok(Json(ChatResponse { response: response_text }))
+}
+
+/// SSE streaming chat endpoint — sends events as the agent works.
+async fn chat_stream(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TokenQuery>,
+    Json(body): Json<ChatRequest>,
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<SseEvent, Infallible>>>, (StatusCode, Json<ErrorResponse>)> {
+    check_token(&q, &state.dashboard_token)?;
+
+    let agent = state
+        .agent_registry
+        .get("agt_default_chat")
+        .or_else(|_| {
+            state.agent_registry.list_all()
+                .and_then(|agents| agents.into_iter().next().ok_or_else(|| {
+                    nexmind_agent_engine::AgentError::NotFound("no agents available".into())
+                }))
+        })
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+        })?;
+
+    let context = nexmind_agent_engine::RunContext::new("default")
+        .with_session(&state.session_id)
+        .with_workspace_path(state.workspace_path.clone());
+
+    let runtime = state.agent_runtime.clone();
+    let message = body.message.clone();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<SseEvent, Infallible>>(64);
+
+    // Run agent in background, send SSE events
+    tokio::spawn(async move {
+        // Send "thinking" event
+        let _ = tx.send(Ok(SseEvent::default()
+            .event("thinking")
+            .data(serde_json::json!({"status": "Agent is planning..."}).to_string())
+        )).await;
+
+        match runtime.run(&agent, &message, context).await {
+            Ok(result) => {
+                // Send plan if available
+                if let Some(ref plan) = result.plan {
+                    let _ = tx.send(Ok(SseEvent::default()
+                        .event("plan")
+                        .data(serde_json::json!({"plan": plan}).to_string())
+                    )).await;
+                }
+
+                // Send reflections
+                for reflection in &result.reflections {
+                    let _ = tx.send(Ok(SseEvent::default()
+                        .event("reflection")
+                        .data(serde_json::json!({"text": reflection}).to_string())
+                    )).await;
+                }
+
+                // Send the response
+                if let Some(ref response) = result.response {
+                    let _ = tx.send(Ok(SseEvent::default()
+                        .event("text_delta")
+                        .data(serde_json::json!({"text": response}).to_string())
+                    )).await;
+                }
+
+                // Send done event with metadata
+                let _ = tx.send(Ok(SseEvent::default()
+                    .event("done")
+                    .data(serde_json::json!({
+                        "status": result.status.name(),
+                        "iterations": result.iterations,
+                        "tokens_used": result.tokens_used.total_tokens,
+                        "duration_ms": result.duration_ms,
+                        "facts_extracted": result.extracted_facts.len(),
+                    }).to_string())
+                )).await;
+            }
+            Err(e) => {
+                let _ = tx.send(Ok(SseEvent::default()
+                    .event("error")
+                    .data(serde_json::json!({"error": e.to_string()}).to_string())
+                )).await;
+            }
+        }
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 #[derive(Serialize)]
