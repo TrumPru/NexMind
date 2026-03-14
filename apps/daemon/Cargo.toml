@@ -12,7 +12,7 @@ nexmind-agent-engine = { workspace = true }
 nexmind-memory = { workspace = true }
 nexmind-tool-runtime = { workspace = true }
 nexmind-connector = { workspace = true }
-nexmind-telegram = { workspace = true }
+nexmind-telegram = { workspace = true, features = ["live"] }
 nexmind-scheduler = { workspace = true }
 nexmind-skill-registry = { workspace = true }
 nexmind-openclaw = { workspace = true }

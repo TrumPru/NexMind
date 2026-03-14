@@ -128,8 +128,17 @@ impl Connector for TelegramConnector {
         info!("Telegram connector starting (long-poll mode)");
         self.running.store(true, Ordering::Relaxed);
 
-        // In live mode, teloxide polling is started from live::start_polling()
-        // In stub/test mode, messages are injected via sender()
+        #[cfg(feature = "live")]
+        {
+            // Start long-polling in background
+            live::start_polling(
+                self.config.bot_token.clone(),
+                self.config.allowed_user_ids.clone(),
+                self.incoming_tx.clone(),
+                self.running.clone(),
+            );
+        }
+
         Ok(())
     }
 
