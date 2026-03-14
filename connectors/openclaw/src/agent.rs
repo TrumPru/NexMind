@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use nexmind_agent_engine::{
     AgentDefinition, AgentError, AgentRunResult, BudgetPolicy, ExecutionPolicy, MemoryPolicy,
