@@ -6,7 +6,7 @@ use tracing::info;
 
 use nexmind_tool_runtime::{Tool, ToolContext, ToolDefinition, ToolError, ToolOutput};
 
-use crate::agent::OpenClawAgent;
+use crate::OpenClawAgent;
 
 // ── openclaw_send ───────────────────────────────────────────────────
 
@@ -212,7 +212,7 @@ impl Tool for OpenClawStatusTool {
                 result: json!({
                     "status": health.status.unwrap_or_else(|| "unknown".into()),
                     "version": health.version.unwrap_or_else(|| "unknown".into()),
-                    "uptime_seconds": health.uptime,
+                    "ok": health.ok.unwrap_or(false),
                     "available": true,
                 }),
                 tokens_used: None,

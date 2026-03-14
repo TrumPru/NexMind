@@ -6,80 +6,81 @@ use crate::OpenClawError;
 
 /// OpenClaw Gateway HTTP client.
 ///
-/// Communicates with an OpenClaw Gateway instance to:
-/// - Send messages and get responses (synchronous request/response)
-/// - Spawn isolated agent sessions
-/// - Check gateway health and status
+/// Communicates with an OpenClaw Gateway instance via its OpenAI-compatible
+/// `/v1/chat/completions` endpoint. This is the primary integration path:
+/// NexMind sends messages as chat completions, OpenClaw processes them
+/// with its full agent pipeline (tools, memory, skills) and returns responses.
 pub struct GatewayClient {
     config: OpenClawConfig,
     http: reqwest::Client,
 }
 
-// ── Request / Response types ────────────────────────────────────────
+// ── OpenAI-compatible request/response types ────────────────────────
 
-/// Request to send a message to an OpenClaw session.
+/// Chat message in OpenAI format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// OpenAI-compatible chat completion request.
 #[derive(Debug, Serialize)]
-pub struct SessionSendRequest {
-    pub message: String,
+pub struct ChatCompletionRequest {
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_key: Option<String>,
+    pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeout_seconds: Option<u64>,
+    pub user: Option<String>,
 }
 
-/// Response from an OpenClaw session message.
+/// OpenAI-compatible chat completion response.
 #[derive(Debug, Deserialize)]
-pub struct SessionSendResponse {
-    pub reply: Option<String>,
-    pub session_key: Option<String>,
-    pub error: Option<String>,
+pub struct ChatCompletionResponse {
+    pub id: Option<String>,
+    pub choices: Vec<Choice>,
+    pub usage: Option<Usage>,
 }
 
-/// Request to spawn an isolated OpenClaw agent session.
-#[derive(Debug, Serialize)]
-pub struct SpawnRequest {
-    pub task: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeout_seconds: Option<u64>,
-}
-
-/// Response from spawning an OpenClaw session.
+/// A single choice in a chat completion response.
 #[derive(Debug, Deserialize)]
-pub struct SpawnResponse {
-    pub session_id: Option<String>,
-    pub session_key: Option<String>,
-    pub result: Option<String>,
-    pub error: Option<String>,
+pub struct Choice {
+    pub index: u32,
+    pub message: ChatMessage,
+    pub finish_reason: Option<String>,
+}
+
+/// Token usage info.
+#[derive(Debug, Deserialize)]
+pub struct Usage {
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
+    pub total_tokens: Option<u32>,
 }
 
 /// OpenClaw gateway health status.
 #[derive(Debug, Deserialize)]
 pub struct GatewayHealth {
+    pub ok: Option<bool>,
     pub status: Option<String>,
     pub version: Option<String>,
-    pub uptime: Option<u64>,
 }
 
-/// Session info from listing sessions.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SessionInfo {
-    pub session_key: Option<String>,
-    pub label: Option<String>,
+/// Simplified request for sending a message to OpenClaw.
+#[derive(Debug)]
+pub struct SendMessageRequest {
+    pub message: String,
     pub agent_id: Option<String>,
-    pub status: Option<String>,
-    pub last_message: Option<String>,
+    pub session_user: Option<String>,
+}
+
+/// Simplified response from OpenClaw.
+#[derive(Debug)]
+pub struct SendMessageResponse {
+    pub reply: String,
+    pub finish_reason: Option<String>,
+    pub usage: Option<Usage>,
 }
 
 impl GatewayClient {
@@ -93,33 +94,57 @@ impl GatewayClient {
         Self { config, http }
     }
 
-    /// Build a full URL for an API endpoint.
-    fn url(&self, path: &str) -> String {
-        format!("{}/api/v1{}", self.config.http_url.trim_end_matches('/'), path)
+    /// Build the chat completions URL.
+    fn completions_url(&self) -> String {
+        format!(
+            "{}/v1/chat/completions",
+            self.config.http_url.trim_end_matches('/')
+        )
     }
 
-    /// Add auth headers if a gateway token is configured.
-    fn auth_headers(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    /// Add auth and agent headers.
+    fn add_headers(&self, req: reqwest::RequestBuilder, agent_id: Option<&str>) -> reqwest::RequestBuilder {
+        let mut req = req.header("Content-Type", "application/json");
+
         if let Some(ref token) = self.config.gateway_token {
-            req.header("Authorization", format!("Bearer {}", token))
-        } else {
-            req
+            req = req.header("Authorization", format!("Bearer {}", token));
         }
+
+        if let Some(agent) = agent_id {
+            req = req.header("x-openclaw-agent-id", agent);
+        }
+
+        req
     }
 
     // ── Core API methods ────────────────────────────────────────────
 
-    /// Send a message to an OpenClaw session and wait for a response.
+    /// Send a message to OpenClaw and get a response.
     ///
-    /// This is the primary way NexMind agents communicate with OpenClaw.
-    /// The message is sent to OpenClaw's agent, which processes it and
-    /// returns a response.
+    /// Uses the OpenAI-compatible `/v1/chat/completions` endpoint.
+    /// OpenClaw processes the message through its full agent pipeline
+    /// (tools, memory, skills) and returns the result.
     pub async fn send_message(
         &self,
-        request: SessionSendRequest,
-    ) -> Result<SessionSendResponse, OpenClawError> {
-        let url = self.url("/sessions/send");
+        request: SendMessageRequest,
+    ) -> Result<SendMessageResponse, OpenClawError> {
+        let url = self.completions_url();
         debug!(url = %url, "sending message to OpenClaw");
+
+        let agent_id = request
+            .agent_id
+            .as_deref()
+            .or(self.config.default_agent.as_deref());
+
+        let body = ChatCompletionRequest {
+            model: "openclaw".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: request.message,
+            }],
+            stream: Some(false),
+            user: request.session_user,
+        };
 
         let mut last_error = None;
 
@@ -130,22 +155,34 @@ impl GatewayClient {
                 tokio::time::sleep(backoff).await;
             }
 
-            let req = self.auth_headers(self.http.post(&url)).json(&request);
+            let req = self.add_headers(self.http.post(&url), agent_id).json(&body);
 
             match req.send().await {
                 Ok(resp) => {
                     let status = resp.status();
+
                     if status.is_success() {
-                        let body = resp
-                            .json::<SessionSendResponse>()
+                        let completion: ChatCompletionResponse = resp
+                            .json()
                             .await
                             .map_err(|e| OpenClawError::ParseError(e.to_string()))?;
 
-                        if let Some(ref err) = body.error {
-                            return Err(OpenClawError::AgentError(err.clone()));
-                        }
+                        let reply = completion
+                            .choices
+                            .first()
+                            .map(|c| c.message.content.clone())
+                            .unwrap_or_default();
 
-                        return Ok(body);
+                        let finish_reason = completion
+                            .choices
+                            .first()
+                            .and_then(|c| c.finish_reason.clone());
+
+                        return Ok(SendMessageResponse {
+                            reply,
+                            finish_reason,
+                            usage: completion.usage,
+                        });
                     }
 
                     let error_body = resp.text().await.unwrap_or_default();
@@ -155,9 +192,18 @@ impl GatewayClient {
                         continue;
                     }
 
+                    if status.as_u16() == 401 || status.as_u16() == 403 {
+                        return Err(OpenClawError::GatewayError(format!(
+                            "Authentication failed ({}): {}",
+                            status, error_body
+                        )));
+                    }
+
                     if status.is_server_error() {
-                        last_error =
-                            Some(OpenClawError::GatewayError(format!("{}: {}", status, error_body)));
+                        last_error = Some(OpenClawError::GatewayError(format!(
+                            "{}: {}",
+                            status, error_body
+                        )));
                         continue;
                     }
 
@@ -179,18 +225,27 @@ impl GatewayClient {
         Err(last_error.unwrap_or(OpenClawError::ConnectionFailed("max retries exceeded".into())))
     }
 
-    /// Spawn an isolated agent session in OpenClaw.
+    /// Send a multi-turn conversation to OpenClaw.
     ///
-    /// Used for one-shot tasks: send a task description, get back a result
-    /// when the agent finishes. Good for delegating complex work.
-    pub async fn spawn_session(
+    /// Allows sending full conversation history for context-aware responses.
+    pub async fn send_conversation(
         &self,
-        request: SpawnRequest,
-    ) -> Result<SpawnResponse, OpenClawError> {
-        let url = self.url("/sessions/spawn");
-        debug!(url = %url, task = %request.task, "spawning OpenClaw session");
+        messages: Vec<ChatMessage>,
+        agent_id: Option<&str>,
+        session_user: Option<&str>,
+    ) -> Result<SendMessageResponse, OpenClawError> {
+        let url = self.completions_url();
 
-        let req = self.auth_headers(self.http.post(&url)).json(&request);
+        let agent = agent_id.or(self.config.default_agent.as_deref());
+
+        let body = ChatCompletionRequest {
+            model: "openclaw".into(),
+            messages,
+            stream: Some(false),
+            user: session_user.map(|s| s.into()),
+        };
+
+        let req = self.add_headers(self.http.post(&url), agent).json(&body);
 
         let resp = req
             .send()
@@ -206,16 +261,34 @@ impl GatewayClient {
             )));
         }
 
-        resp.json::<SpawnResponse>()
+        let completion: ChatCompletionResponse = resp
+            .json()
             .await
-            .map_err(|e| OpenClawError::ParseError(e.to_string()))
+            .map_err(|e| OpenClawError::ParseError(e.to_string()))?;
+
+        let reply = completion
+            .choices
+            .first()
+            .map(|c| c.message.content.clone())
+            .unwrap_or_default();
+
+        let finish_reason = completion
+            .choices
+            .first()
+            .and_then(|c| c.finish_reason.clone());
+
+        Ok(SendMessageResponse {
+            reply,
+            finish_reason,
+            usage: completion.usage,
+        })
     }
 
     /// Check if the OpenClaw gateway is reachable and healthy.
     pub async fn health_check(&self) -> Result<GatewayHealth, OpenClawError> {
         let url = format!("{}/health", self.config.http_url.trim_end_matches('/'));
 
-        let req = self.auth_headers(self.http.get(&url));
+        let req = self.http.get(&url);
 
         match req.send().await {
             Ok(resp) => {
@@ -234,40 +307,15 @@ impl GatewayClient {
         }
     }
 
-    /// List active sessions on the OpenClaw gateway.
-    pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>, OpenClawError> {
-        let url = self.url("/sessions");
-
-        let req = self.auth_headers(self.http.get(&url));
-
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| OpenClawError::ConnectionFailed(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            let error_body = resp.text().await.unwrap_or_default();
-            return Err(OpenClawError::GatewayError(format!(
-                "list sessions failed: {}",
-                error_body
-            )));
-        }
-
-        resp.json::<Vec<SessionInfo>>()
-            .await
-            .map_err(|e| OpenClawError::ParseError(e.to_string()))
-    }
-
     /// Check if the gateway is reachable (simple connectivity test).
     pub async fn is_reachable(&self) -> bool {
         match self.health_check().await {
             Ok(h) => {
                 info!(
-                    version = ?h.version,
                     status = ?h.status,
                     "OpenClaw gateway reachable"
                 );
-                true
+                h.ok.unwrap_or(false) || h.status.as_deref() == Some("live")
             }
             Err(e) => {
                 error!(error = %e, "OpenClaw gateway unreachable");
@@ -282,52 +330,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_url_building() {
+    fn test_completions_url() {
         let config = OpenClawConfig {
             http_url: "http://127.0.0.1:18789".into(),
             ..Default::default()
         };
         let client = GatewayClient::new(config);
-        assert_eq!(client.url("/sessions/send"), "http://127.0.0.1:18789/api/v1/sessions/send");
+        assert_eq!(
+            client.completions_url(),
+            "http://127.0.0.1:18789/v1/chat/completions"
+        );
     }
 
     #[test]
-    fn test_url_building_trailing_slash() {
+    fn test_completions_url_trailing_slash() {
         let config = OpenClawConfig {
             http_url: "http://127.0.0.1:18789/".into(),
             ..Default::default()
         };
         let client = GatewayClient::new(config);
-        assert_eq!(client.url("/sessions/send"), "http://127.0.0.1:18789/api/v1/sessions/send");
+        assert_eq!(
+            client.completions_url(),
+            "http://127.0.0.1:18789/v1/chat/completions"
+        );
     }
 
     #[test]
-    fn test_send_request_serialization() {
-        let req = SessionSendRequest {
-            message: "Hello OpenClaw".into(),
-            session_key: None,
-            label: Some("nexmind-agent".into()),
-            agent_id: None,
-            timeout_seconds: Some(60),
+    fn test_chat_completion_request_serialization() {
+        let req = ChatCompletionRequest {
+            model: "openclaw".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "Hello OpenClaw".into(),
+            }],
+            stream: Some(false),
+            user: Some("nexmind-test".into()),
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("Hello OpenClaw"));
-        assert!(json.contains("nexmind-agent"));
-        assert!(!json.contains("session_key")); // None fields skipped
+        assert!(json.contains("\"model\":\"openclaw\""));
+        assert!(json.contains("nexmind-test"));
     }
 
     #[test]
-    fn test_spawn_request_serialization() {
-        let req = SpawnRequest {
-            task: "Summarize this document".into(),
-            agent_id: None,
-            model: Some("anthropic/claude-sonnet-4-20250514".into()),
-            label: None,
-            mode: Some("run".into()),
-            timeout_seconds: Some(300),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("Summarize this document"));
-        assert!(json.contains("claude-sonnet"));
+    fn test_chat_completion_response_deserialization() {
+        let json = r#"{
+            "id": "chatcmpl_test",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello from OpenClaw!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        }"#;
+
+        let resp: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.choices.len(), 1);
+        assert_eq!(resp.choices[0].message.content, "Hello from OpenClaw!");
+        assert_eq!(resp.choices[0].finish_reason.as_deref(), Some("stop"));
+        assert_eq!(resp.usage.unwrap().total_tokens, Some(15));
+    }
+
+    #[test]
+    fn test_health_response_deserialization() {
+        let json = r#"{"ok": true, "status": "live"}"#;
+        let health: GatewayHealth = serde_json::from_str(json).unwrap();
+        assert_eq!(health.ok, Some(true));
+        assert_eq!(health.status.as_deref(), Some("live"));
     }
 }

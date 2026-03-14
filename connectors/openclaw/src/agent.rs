@@ -9,7 +9,7 @@ use nexmind_agent_engine::{
 use nexmind_model_router::TokenUsage;
 
 use crate::config::OpenClawConfig;
-use crate::gateway::{GatewayClient, SessionSendRequest, SpawnRequest};
+use crate::gateway::{GatewayClient, SendMessageRequest};
 use crate::OpenClawError;
 
 /// OpenClaw external agent — delegates tasks to an OpenClaw Gateway instance.
@@ -29,7 +29,7 @@ use crate::OpenClawError;
 /// // Simple request/response
 /// let response = agent.run("What's the weather in SF?").await?;
 ///
-/// // Spawn isolated task
+/// // Delegate a complex task
 /// let result = agent.delegate_task("Analyze this codebase and create a summary").await?;
 /// ```
 pub struct OpenClawAgent {
@@ -57,81 +57,65 @@ impl OpenClawAgent {
 
     /// Send a message to OpenClaw and get a response.
     ///
-    /// Uses OpenClaw's main agent session. Good for conversational
-    /// interactions where context should be maintained.
+    /// Uses the OpenAI-compatible `/v1/chat/completions` endpoint.
+    /// OpenClaw processes it through its full agent pipeline with tools,
+    /// memory, and skills, then returns the result.
     pub async fn run(&self, input: &str) -> Result<String, OpenClawError> {
         info!(input_len = input.len(), "sending to OpenClaw agent");
 
-        let request = SessionSendRequest {
+        let request = SendMessageRequest {
             message: input.into(),
-            session_key: None,
-            label: Some(self.session_label.clone()),
             agent_id: self.config.default_agent.clone(),
-            timeout_seconds: Some(self.config.timeout_secs),
+            session_user: Some(self.session_label.clone()),
         };
 
         let response = self.client.send_message(request).await?;
 
-        match response.reply {
-            Some(reply) => {
-                debug!(reply_len = reply.len(), "OpenClaw response received");
-                Ok(reply)
-            }
-            None => Err(OpenClawError::AgentError(
-                "OpenClaw returned no response".into(),
-            )),
+        if response.reply.is_empty() {
+            return Err(OpenClawError::AgentError(
+                "OpenClaw returned empty response".into(),
+            ));
         }
+
+        debug!(reply_len = response.reply.len(), "OpenClaw response received");
+        Ok(response.reply)
     }
 
-    /// Delegate a task to an isolated OpenClaw session.
+    /// Delegate a task to OpenClaw with a specific instruction.
     ///
-    /// Spawns a new isolated session that runs the task to completion.
-    /// Good for complex, long-running tasks that shouldn't interfere
-    /// with the main conversation.
+    /// Uses a unique session user ID so the task runs in its own context.
     pub async fn delegate_task(&self, task: &str) -> Result<String, OpenClawError> {
         self.delegate_task_with_options(task, None, None).await
     }
 
-    /// Delegate a task with specific model and timeout options.
+    /// Delegate a task with specific agent and timeout options.
     pub async fn delegate_task_with_options(
         &self,
         task: &str,
-        model: Option<&str>,
-        timeout_secs: Option<u64>,
+        agent_id: Option<&str>,
+        _timeout_secs: Option<u64>,
     ) -> Result<String, OpenClawError> {
-        info!(task_len = task.len(), model = ?model, "delegating task to OpenClaw");
+        info!(task_len = task.len(), agent = ?agent_id, "delegating task to OpenClaw");
 
-        let request = SpawnRequest {
-            task: task.into(),
-            agent_id: self.config.default_agent.clone(),
-            model: model.map(|m| m.into()),
-            label: Some(format!("{}-task", self.session_label)),
-            mode: Some("run".into()),
-            timeout_seconds: timeout_secs.or(Some(self.config.timeout_secs)),
+        // Use a unique session user for task isolation
+        let task_session = format!("{}-task-{}", self.session_label, ulid::Ulid::new());
+
+        let request = SendMessageRequest {
+            message: task.into(),
+            agent_id: agent_id.map(|a| a.into()).or_else(|| self.config.default_agent.clone()),
+            session_user: Some(task_session),
         };
 
-        let response = self.client.spawn_session(request).await?;
+        let response = self.client.send_message(request).await?;
 
-        match response.result {
-            Some(result) => {
-                debug!(result_len = result.len(), "OpenClaw task completed");
-                Ok(result)
-            }
-            None => {
-                if let Some(err) = response.error {
-                    Err(OpenClawError::AgentError(err))
-                } else {
-                    // Session spawned but result not yet available
-                    // Return session info for polling
-                    Ok(format!(
-                        "Task spawned. Session: {}",
-                        response
-                            .session_key
-                            .unwrap_or_else(|| "unknown".into())
-                    ))
-                }
-            }
+        if response.reply.is_empty() {
+            return Err(OpenClawError::AgentError(
+                "OpenClaw returned empty response for task".into(),
+            ));
         }
+
+        debug!(result_len = response.reply.len(), "OpenClaw task completed");
+        Ok(response.reply)
     }
 
     /// Check if the OpenClaw gateway is available.
@@ -211,10 +195,6 @@ impl OpenClawAgent {
 }
 
 /// Adapter to make OpenClawAgent work with NexMind's AgentRuntime.
-///
-/// This wraps the OpenClaw agent so it can be called from the standard
-/// agent execution pipeline — the agent runtime calls `execute()`,
-/// which forwards to OpenClaw and returns the result.
 pub struct OpenClawExecutor {
     agent: Arc<OpenClawAgent>,
 }
@@ -254,18 +234,18 @@ impl OpenClawExecutor {
         })
     }
 
-    /// Delegate a complex task to an isolated OpenClaw session.
+    /// Delegate a complex task to OpenClaw.
     pub async fn delegate(
         &self,
         task: &str,
         run_id: &str,
-        model: Option<&str>,
+        agent_id: Option<&str>,
     ) -> Result<AgentRunResult, AgentError> {
         let start = std::time::Instant::now();
 
         let response = self
             .agent
-            .delegate_task_with_options(task, model, None)
+            .delegate_task_with_options(task, agent_id, None)
             .await
             .map_err(|e| AgentError::ExecutionError(format!("OpenClaw delegation error: {}", e)))?;
 
