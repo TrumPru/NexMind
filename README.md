@@ -4,87 +4,87 @@
 
 # NexMind
 
-**AI Agent Platform** — запускайте ИИ-агентов локально на своём компьютере или сервере. Агенты выполняют задачи через привычные мессенджеры, управляют браузером, терминалом, файлами и почтой.
+**AI Agent Platform** — run AI agents locally on your computer or server. Agents perform tasks through your preferred messenger, controlling your browser, terminal, files, and email.
 
-## Возможности
+## Features
 
-- **Терминал** — выполнение shell-команд на вашей машине
-- **Браузер** — навигация, клики, ввод текста, скриншоты, извлечение данных
-- **Файловая система** — чтение, запись и просмотр файлов
-- **Электронная почта** — отправка, получение и поиск писем (IMAP/SMTP)
-- **HTTP-запросы** — обращение к внешним API
-- **Память** — сессионная и семантическая (долгосрочная) память
-- **Мульти-агенты** — оркестрация команд агентов (последовательно/параллельно)
-- **Планировщик** — запуск агентов по расписанию (cron)
-- **Навыки** — встроенные и расширяемые скиллы (погода, веб-поиск, переводчик, математика, QR-коды и др.)
-- **Контроль затрат** — отслеживание токенов и бюджета по каждому агенту
-- **Согласования** — workflow одобрения для критичных действий с уровнями риска
-- **Аудит и безопасность** — логирование, HMAC-валидация
+- **Terminal** — execute shell commands on your machine
+- **Browser** — navigation, clicks, text input, screenshots, data extraction
+- **File System** — read, write, and list files
+- **Email** — send, receive, and search emails (IMAP/SMTP)
+- **HTTP Requests** — access external APIs
+- **Memory** — session and semantic (long-term) memory
+- **Multi-Agent** — orchestrate agent teams (sequential/parallel)
+- **Scheduler** — run agents on a schedule (cron)
+- **Skills** — built-in and extensible skills (weather, web search, translator, math, QR codes, etc.)
+- **Cost Tracking** — monitor tokens and budget per agent
+- **Approvals** — approval workflows for sensitive actions with risk levels
+- **Audit & Security** — logging, HMAC validation
 
-## Архитектура
+## Architecture
 
 ```
 apps/
-├── daemon/          # Основной демон (gRPC + HTTP dashboard)
-└── cli/             # Командная строка для управления
+├── daemon/          # Main daemon (gRPC + HTTP dashboard)
+└── cli/             # Command-line interface
 
 core/
-├── agent-engine/    # Определение, реестр и рантайм агентов
-├── model-router/    # Маршрутизация между LLM-провайдерами
-├── tool-runtime/    # Движок инструментов (15+ встроенных)
-├── memory/          # Сессионная + семантическая память
-├── scheduler/       # Планировщик задач (cron)
-├── workflow-engine/ # Оркестрация многошаговых сценариев
-├── skill-registry/  # Загрузка и управление навыками
-├── connector/       # Базовые трейты коннекторов
-├── event-bus/       # Система событий
-├── storage/         # SQLite-абстракция
-└── security/        # Аудит, HMAC
+├── agent-engine/    # Agent definition, registry, and runtime
+├── model-router/    # Multi-provider LLM routing
+├── tool-runtime/    # Tool execution engine (15+ built-in tools)
+├── memory/          # Session + semantic memory
+├── scheduler/       # Task scheduler (cron)
+├── workflow-engine/ # Multi-step workflow orchestration
+├── skill-registry/  # Skill loading and management
+├── connector/       # Base connector traits
+├── event-bus/       # Event system
+├── storage/         # SQLite abstraction
+└── security/        # Audit, HMAC
 
 connectors/
-├── telegram/        # Telegram-бот
-└── openclaw/        # OpenClaw-шлюз
+├── telegram/        # Telegram bot
+└── openclaw/        # OpenClaw gateway
 
-skills/builtin/      # Встроенные навыки (8 шт.)
-dashboard/           # Веб-интерфейс (SPA)
-proto/               # Protobuf-описания gRPC API
+skills/builtin/      # Built-in skills (8)
+dashboard/           # Web UI (SPA)
+proto/               # Protobuf gRPC API definitions
 ```
 
-## Технологии
+## Tech Stack
 
 - **Rust** + **Tokio** (async runtime)
-- **gRPC** (tonic/prost) — основной API
-- **Axum** — HTTP-сервер для дашборда
-- **SQLite** (rusqlite + r2d2) — хранение данных
-- **Teloxide** — Telegram-интеграция
+- **gRPC** (tonic/prost) — primary API
+- **Axum** — HTTP server for the dashboard
+- **SQLite** (rusqlite + r2d2) — data storage
+- **Teloxide** — Telegram integration
 
-### Поддерживаемые LLM-провайдеры
+### Supported LLM Providers
 
-| Провайдер | Подключение |
-|-----------|-------------|
-| Anthropic | API-ключ (`ANTHROPIC_API_KEY`) |
-| Claude Code | Подписка |
-| OpenAI | API-ключ (`OPENAI_API_KEY`) |
-| Ollama | Локальный инференс |
+| Provider | Connection |
+|----------|------------|
+| Anthropic | API key (`ANTHROPIC_API_KEY`) |
+| Claude Code | Subscription |
+| OpenAI | API key (`OPENAI_API_KEY`) |
+| Ollama | Local inference |
 
-Автоматический fallback: если основной провайдер недоступен, система переключается на следующий по приоритету.
+Automatic fallback: if the primary provider is unavailable, the system switches to the next one by priority.
 
-## Установка и запуск
+## Installation & Usage
 
-### Требования
+### Requirements
 
 - Rust 1.75+
 - SQLite 3
-- Chrome/Chromium (опционально, для браузерной автоматизации)
-- Ollama (опционально, для локального инференса)
+- Chrome/Chromium (optional, for browser automation)
+- Ollama (optional, for local inference)
 
-### Сборка
+### Build
 
 ```bash
 cargo build --release
 ```
 
-### Запуск демона
+### Run the Daemon
 
 ```bash
 cargo run --bin nexmind-daemon -- \
@@ -96,35 +96,35 @@ cargo run --bin nexmind-daemon -- \
 ### CLI
 
 ```bash
-nexmind health            # Проверка состояния демона
-nexmind chat              # Интерактивный чат (REPL)
-nexmind agent list        # Список агентов
-nexmind agent create      # Создание агента
-nexmind schedule list     # Запланированные задачи
-nexmind team list         # Команды агентов
-nexmind cost summary      # Статистика затрат
-nexmind approve           # Управление согласованиями
+nexmind health            # Check daemon status
+nexmind chat              # Interactive chat (REPL)
+nexmind agent list        # List agents
+nexmind agent create      # Create an agent
+nexmind schedule list     # List scheduled tasks
+nexmind team list         # List agent teams
+nexmind cost summary      # Cost statistics
+nexmind approve           # Manage approvals
 ```
 
-### Эндпоинты
+### Endpoints
 
-| Сервис | Адрес |
-|--------|-------|
+| Service | Address |
+|---------|---------|
 | gRPC API | `127.0.0.1:19384` |
 | HTTP Dashboard | `http://127.0.0.1:19385/?token=<token>` |
 
-## Переменные окружения
+## Environment Variables
 
-| Переменная | Описание |
-|------------|----------|
-| `ANTHROPIC_API_KEY` | Ключ API Anthropic |
-| `OPENAI_API_KEY` | Ключ API OpenAI |
-| `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота |
-| `OPENCLAW_GATEWAY_URL` | URL шлюза OpenClaw |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Настройки SMTP |
-| `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASSWORD` | Настройки IMAP |
-| `RUST_LOG` | Уровень логирования (по умолчанию `info`) |
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
+| `OPENCLAW_GATEWAY_URL` | OpenClaw gateway URL |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | SMTP settings |
+| `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASSWORD` | IMAP settings |
+| `RUST_LOG` | Log level (default: `info`) |
 
-## Лицензия
+## License
 
 MIT
