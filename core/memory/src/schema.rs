@@ -18,6 +18,8 @@ pub fn init_memory_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             access_policy   TEXT DEFAULT 'workspace',
             metadata        TEXT,
             expires_at      TEXT,
+            access_count    INTEGER DEFAULT 0,
+            last_accessed_at TEXT,
             created_at      TEXT NOT NULL,
             updated_at      TEXT NOT NULL
         );

@@ -154,6 +154,13 @@ label{display:block;color:var(--text-secondary);font-size:.85em;margin-bottom:6p
 .copy-btn{position:absolute;top:6px;right:6px;background:rgba(255,255,255,.12);color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:.72em;cursor:pointer;opacity:0;transition:all var(--transition-fast);backdrop-filter:blur(4px)}
 .copy-btn:hover{background:rgba(255,255,255,.2)}
 .chat-bubble pre:hover .copy-btn{opacity:1}
+.chat-bubble.command{background:rgba(124,108,247,.08);border:1px solid rgba(124,108,247,.2);margin-right:auto;border-bottom-left-radius:4px;font-family:var(--font-mono);font-size:.82em;white-space:pre-wrap;line-height:1.5}
+.cmd-autocomplete{position:absolute;bottom:100%;left:0;right:0;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;max-height:260px;overflow-y:auto;display:none;z-index:100;box-shadow:var(--shadow-md)}
+.cmd-autocomplete.show{display:block}
+.cmd-item{padding:8px 14px;cursor:pointer;font-size:.84em;display:flex;gap:10px;transition:background var(--transition-fast)}
+.cmd-item:hover,.cmd-item.active{background:var(--bg-hover)}
+.cmd-item .cmd-name{color:var(--accent);font-family:var(--font-mono);font-weight:600;min-width:130px}
+.cmd-item .cmd-desc{color:var(--text-secondary)}
 .tool-card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);margin:10px 0;overflow:hidden;transition:all var(--transition-fast)}
 .tool-card:hover{border-color:rgba(124,108,247,.2)}
 .tool-card-header{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;font-size:.82em;color:var(--text-secondary);transition:background var(--transition-fast)}
@@ -537,24 +544,114 @@ function newConversation(){
   saveMessages();
   renderChat();
 }
+// Slash command definitions for autocomplete
+const SLASH_COMMANDS = [
+  { cmd: '/help', desc: 'Show available commands' },
+  { cmd: '/status', desc: 'System status (uptime, model, agent)' },
+  { cmd: '/model', desc: 'Show current model' },
+  { cmd: '/model list', desc: 'List available models' },
+  { cmd: '/model set', desc: 'Switch model (e.g. /model set anthropic/claude-sonnet-4-20250514)' },
+  { cmd: '/restart', desc: 'Restart the NexMind server' },
+  { cmd: '/clear', desc: 'Clear conversation history' },
+  { cmd: '/agent list', desc: 'List registered agents' },
+  { cmd: '/agent switch', desc: 'Switch active agent' },
+  { cmd: '/history', desc: 'Show last N messages (default 10)' },
+  { cmd: '/memory search', desc: 'Search semantic memory' },
+];
 function sendChatMessage(){
   const ta = document.getElementById('chat-input');
   if(!ta) return;
   const text = ta.value.trim();
   if(!text) return;
+  hideCmdAutocomplete();
   appendMessage('user', text);
   ta.value = '';
   ta.style.height = 'auto';
+
+  // Slash commands — use non-streaming endpoint for instant response
+  if(text.startsWith('/')){
+    const token = store.token || new URLSearchParams(location.search).get('token');
+    api('/api/chat?token='+encodeURIComponent(token), { method:'POST', body: JSON.stringify({ message: text }) })
+      .then(d => { appendMessage('command', d.response || '(no response)'); renderChat(); })
+      .catch(e => { appendMessage('command', 'Error: '+e.message); renderChat(); });
+    return;
+  }
+
   store.streaming = true;
   store.streamBuf = '';
+  renderChat();
+
   if(store.wsConnected){
     wsSend({ type:'chat', message: text, agent_id: store.currentAgent, session_id: store.sessionId });
-  } else {
-    api('/api/chat', { method:'POST', body: JSON.stringify({ message: text, agent_id: store.currentAgent, session_id: store.sessionId }) })
-      .then(d => { appendMessage('assistant', d.response || '(no response)'); store.streaming = false; })
-      .catch(e => { appendMessage('assistant', 'Error: '+e.message); store.streaming = false; });
+    return;
   }
-  renderChat();
+
+  // Use SSE streaming endpoint for real-time agent responses
+  const token = store.token || new URLSearchParams(location.search).get('token');
+  fetch('/api/chat/stream?token='+encodeURIComponent(token), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: text })
+  }).then(response => {
+    if(!response.ok) throw new Error('HTTP '+response.status);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    function pump(){
+      return reader.read().then(({done, value}) => {
+        if(done){
+          if(store.streamBuf) appendMessage('assistant', store.streamBuf);
+          store.streaming = false;
+          store.streamBuf = '';
+          renderChat();
+          return;
+        }
+        buffer += decoder.decode(value, {stream:true});
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for(const line of lines){
+          if(line.startsWith('event: ')){
+            var evType = line.slice(7).trim();
+          } else if(line.startsWith('data: ') && evType){
+            try{
+              const data = JSON.parse(line.slice(6));
+              if(evType==='thinking'){
+                store.streamBuf = '*'+data.status+'*\n\n';
+                updateStreamingBubble();
+              } else if(evType==='plan'){
+                store.streamBuf += '**Plan:** '+data.plan+'\n\n';
+                updateStreamingBubble();
+              } else if(evType==='text_delta'){
+                store.streamBuf += data.text;
+                updateStreamingBubble();
+              } else if(evType==='reflection'){
+                store.streamBuf += '\n> Reflection: '+data.text+'\n';
+                updateStreamingBubble();
+              } else if(evType==='done'){
+                if(store.streamBuf) appendMessage('assistant', store.streamBuf);
+                store.streaming = false;
+                store.streamBuf = '';
+                renderChat();
+              } else if(evType==='error'){
+                appendMessage('assistant', 'Error: '+(data.error||'unknown'));
+                store.streaming = false;
+                store.streamBuf = '';
+                renderChat();
+              }
+            }catch(e){}
+            evType = null;
+          }
+        }
+        return pump();
+      });
+    }
+    return pump();
+  }).catch(e => {
+    // Fallback to non-streaming endpoint
+    api('/api/chat', { method:'POST', body: JSON.stringify({ message: text }) })
+      .then(d => { appendMessage('assistant', d.response || '(no response)'); store.streaming = false; renderChat(); })
+      .catch(e2 => { appendMessage('assistant', 'Error: '+e2.message); store.streaming = false; renderChat(); });
+  });
 }
 function updateStreamingBubble(){
   const el = document.getElementById('streaming-bubble');
@@ -613,6 +710,8 @@ function renderChat(){
     const time = m.ts ? new Date(m.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '';
     if(m.role==='user'){
       msgs += '<div class="chat-bubble user">'+escHtml(m.text)+(time?'<span class="chat-time">'+time+'</span>':'')+'</div>';
+    } else if(m.role==='command'){
+      msgs += '<div class="chat-bubble command">'+escHtml(m.text)+(time?'<span class="chat-time">'+time+'</span>':'')+'</div>';
     } else {
       msgs += '<div class="chat-bubble assistant">'+renderMd(m.text)+(time?'<span class="chat-time">'+time+'</span>':'')+'</div>';
     }
@@ -627,8 +726,9 @@ function renderChat(){
       '<button class="btn-outline btn-sm" onclick="window._newConvo()">New Conversation</button>'+
     '</div>'+
     '<div class="chat-messages" id="chat-messages">'+msgs+'</div>'+
-    '<div class="chat-input-wrap">'+
-      '<textarea id="chat-input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" rows="1"></textarea>'+
+    '<div class="chat-input-wrap" style="position:relative">'+
+      '<div id="cmd-autocomplete" class="cmd-autocomplete"></div>'+
+      '<textarea id="chat-input" placeholder="Type a message or / for commands... (Enter to send)" rows="1"></textarea>'+
       '<button class="btn-primary" onclick="window._sendChat()" '+(store.streaming?'disabled':'')+'>Send</button>'+
     '</div>'+
   '</div>';
@@ -636,15 +736,70 @@ function renderChat(){
   const ta = document.getElementById('chat-input');
   if(ta){
     ta.addEventListener('keydown', function(e){
+      // Handle autocomplete navigation
+      const ac = document.getElementById('cmd-autocomplete');
+      if(ac && ac.classList.contains('show')){
+        if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+          e.preventDefault();
+          const items = ac.querySelectorAll('.cmd-item');
+          let idx = -1;
+          items.forEach((it,i)=>{ if(it.classList.contains('active')) idx=i; });
+          items.forEach(it=>it.classList.remove('active'));
+          if(e.key==='ArrowDown') idx = (idx+1)%items.length;
+          else idx = idx<=0?items.length-1:idx-1;
+          items[idx].classList.add('active');
+          return;
+        }
+        if(e.key==='Tab'||e.key==='Enter'){
+          const active = ac.querySelector('.cmd-item.active');
+          if(active){
+            e.preventDefault();
+            ta.value = active.dataset.cmd+' ';
+            hideCmdAutocomplete();
+            return;
+          }
+        }
+        if(e.key==='Escape'){ hideCmdAutocomplete(); return; }
+      }
       if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChatMessage(); }
     });
     ta.addEventListener('input', function(){
       this.style.height='auto';
       this.style.height=Math.min(this.scrollHeight,150)+'px';
+      showCmdAutocomplete(this.value);
     });
   }
   scrollChatBottom();
 }
+function showCmdAutocomplete(val){
+  const ac = document.getElementById('cmd-autocomplete');
+  if(!ac) return;
+  val = val.trim();
+  if(!val.startsWith('/')){
+    ac.classList.remove('show');
+    return;
+  }
+  const matches = SLASH_COMMANDS.filter(c => c.cmd.startsWith(val) || val === '/');
+  if(matches.length===0 || (matches.length===1 && matches[0].cmd===val)){
+    ac.classList.remove('show');
+    return;
+  }
+  ac.innerHTML = matches.map((c,i) =>
+    '<div class="cmd-item'+(i===0?' active':'')+'" data-cmd="'+escHtml(c.cmd)+'" onclick="window._pickCmd(this)">'+
+    '<span class="cmd-name">'+escHtml(c.cmd)+'</span>'+
+    '<span class="cmd-desc">'+escHtml(c.desc)+'</span></div>'
+  ).join('');
+  ac.classList.add('show');
+}
+function hideCmdAutocomplete(){
+  const ac = document.getElementById('cmd-autocomplete');
+  if(ac) ac.classList.remove('show');
+}
+window._pickCmd = function(el){
+  const ta = document.getElementById('chat-input');
+  if(ta){ ta.value = el.dataset.cmd+' '; ta.focus(); }
+  hideCmdAutocomplete();
+};
 window._sendChat = sendChatMessage;
 window._newConvo = newConversation;
 window._setAgent = function(v){ store.currentAgent = v; localStorage.setItem('nexmind_agent', v); };

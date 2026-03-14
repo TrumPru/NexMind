@@ -61,6 +61,12 @@ pub struct AgentRunResult {
     pub tokens_used: TokenUsage,
     pub iterations: u32,
     pub duration_ms: u64,
+    /// The plan generated during the planning phase, if any.
+    pub plan: Option<String>,
+    /// Reflection notes collected during execution.
+    pub reflections: Vec<String>,
+    /// Facts automatically extracted from the conversation.
+    pub extracted_facts: Vec<String>,
 }
 
 /// Agent runtime — executes agents using the model router, memory, and tools.
@@ -72,6 +78,8 @@ pub struct AgentRuntime {
     tool_registry: Option<Arc<ToolRegistry>>,
     approval_manager: Option<Arc<crate::approval::ApprovalManager>>,
     cost_tracker: Option<Arc<crate::cost::CostTracker>>,
+    /// Active run cancellation tokens, keyed by run_id.
+    active_runs: Arc<std::sync::Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>>,
 }
 
 impl AgentRuntime {
@@ -88,6 +96,7 @@ impl AgentRuntime {
             tool_registry: None,
             approval_manager: None,
             cost_tracker: None,
+            active_runs: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -111,7 +120,18 @@ impl AgentRuntime {
         self
     }
 
-    /// Run an agent to completion.
+    /// Cancel a running agent task by run_id. Returns true if found and cancelled.
+    pub fn cancel_run(&self, run_id: &str) -> bool {
+        if let Ok(runs) = self.active_runs.lock() {
+            if let Some(token) = runs.get(run_id) {
+                token.cancel();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Run an agent to completion with Think→Plan→Act→Reflect loop.
     pub async fn run(
         &self,
         agent: &AgentDefinition,
@@ -121,6 +141,16 @@ impl AgentRuntime {
         let start = Instant::now();
         let mut total_usage = TokenUsage::default();
         let mut iterations: u32 = 0;
+        let mut plan: Option<String> = None;
+        let mut reflections: Vec<String> = Vec::new();
+        let mut tool_calls_since_reflection: u32 = 0;
+        let mut consecutive_errors: u32 = 0;
+
+        // Register cancellation token for this run
+        let cancel_token = tokio_util::sync::CancellationToken::new();
+        if let Ok(mut runs) = self.active_runs.lock() {
+            runs.insert(context.run_id.clone(), cancel_token.clone());
+        }
 
         info!(
             agent_id = %agent.id,
@@ -161,17 +191,47 @@ impl AgentRuntime {
                 )));
             }
 
-            // Load conversation history
+            // Load conversation history (with summarization if needed)
+            let max_history_tokens = agent.execution_policy.context_summarization_threshold;
             let session_history = memory_store
-                .get_session_history(&context.session_id, 50, 8000)
+                .get_session_history(&context.session_id, 50, max_history_tokens)
                 .unwrap_or_default();
 
             if !session_history.is_empty() {
-                for msg in &session_history {
-                    match msg.role.as_str() {
-                        "user" => messages.push(ChatMessage::user(&msg.content)),
-                        "assistant" => messages.push(ChatMessage::assistant_text(&msg.content)),
-                        _ => {}
+                // If history is large, summarize older messages
+                let total_chars: usize = session_history.iter().map(|m| m.content.len()).sum();
+                let approx_tokens = (total_chars / 4) as u32;
+
+                if approx_tokens > max_history_tokens && session_history.len() > 6 {
+                    // Keep last 4 messages verbatim, summarize the rest
+                    let split_point = session_history.len().saturating_sub(4);
+                    let old_msgs: Vec<String> = session_history[..split_point]
+                        .iter()
+                        .map(|m| format!("{}: {}", m.role, &m.content[..m.content.len().min(200)]))
+                        .collect();
+                    let summary = format!(
+                        "[Summary of {} earlier messages: {}]",
+                        split_point,
+                        old_msgs.join(" | ")
+                    );
+                    messages.push(ChatMessage::system(&format!(
+                        "<conversation_summary>\n{}\n</conversation_summary>",
+                        summary
+                    )));
+                    for msg in &session_history[split_point..] {
+                        match msg.role.as_str() {
+                            "user" => messages.push(ChatMessage::user(&msg.content)),
+                            "assistant" => messages.push(ChatMessage::assistant_text(&msg.content)),
+                            _ => {}
+                        }
+                    }
+                } else {
+                    for msg in &session_history {
+                        match msg.role.as_str() {
+                            "user" => messages.push(ChatMessage::user(&msg.content)),
+                            "assistant" => messages.push(ChatMessage::assistant_text(&msg.content)),
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -202,14 +262,89 @@ impl AgentRuntime {
                 None
             };
 
+        // ── Planning phase: Think before acting ──────────────────────
+
+        if agent.execution_policy.planning_enabled && tool_defs.is_some() {
+            info!(agent_id = %agent.id, "entering planning phase");
+
+            let planning_prompt = format!(
+                "Before taking any actions, analyze this request and create a brief plan.\n\
+                 Think about:\n\
+                 1. What is the user asking for?\n\
+                 2. What steps do I need to take?\n\
+                 3. Which tools will I need?\n\
+                 4. What could go wrong?\n\n\
+                 Respond with a concise plan in <plan> tags, then proceed to execute.\n\
+                 Example: <plan>1. Search memory for context 2. Use browser to fetch data 3. Summarize results</plan>"
+            );
+
+            messages.push(ChatMessage::system(&planning_prompt));
+
+            let plan_req = CompletionRequest {
+                model: agent.model.primary.clone(),
+                messages: messages.clone(),
+                tools: None, // No tools during planning
+                temperature: agent.model.temperature,
+                max_tokens: 1024,
+                stream: false,
+            };
+
+            if let Ok((plan_msg, plan_usage)) = self.non_stream_completion(plan_req).await {
+                total_usage.input_tokens += plan_usage.input_tokens;
+                total_usage.output_tokens += plan_usage.output_tokens;
+                total_usage.total_tokens += plan_usage.total_tokens;
+
+                if let Some(plan_text) = plan_msg.text() {
+                    // Extract plan from <plan> tags if present
+                    let extracted = if let Some(start_idx) = plan_text.find("<plan>") {
+                        if let Some(end_idx) = plan_text.find("</plan>") {
+                            plan_text[start_idx + 6..end_idx].trim().to_string()
+                        } else {
+                            plan_text.to_string()
+                        }
+                    } else {
+                        plan_text.to_string()
+                    };
+
+                    plan = Some(extracted.clone());
+                    info!(agent_id = %agent.id, "plan generated: {}", &extracted[..extracted.len().min(200)]);
+
+                    // Add plan to context for execution
+                    messages.push(plan_msg);
+
+                    // Emit planning event
+                    self.event_bus.emit(Event::new(
+                        EventSource::Agent,
+                        EventType::Custom("agent_plan_generated".into()),
+                        serde_json::json!({
+                            "agent_id": agent.id,
+                            "run_id": context.run_id,
+                            "plan": &extracted[..extracted.len().min(500)],
+                        }),
+                        &context.workspace_id,
+                        Some(context.correlation_id.clone()),
+                    ));
+                }
+            }
+        }
+
         let mut final_response: Option<String> = None;
         #[allow(unused_assignments)]
         let mut state = AgentState::Executing;
 
-        // ── Iteration loop ───────────────────────────────────────────
+        // ── Execution loop with reflection ───────────────────────────
 
         loop {
             iterations += 1;
+
+            // Check for cancellation
+            if cancel_token.is_cancelled() {
+                info!(agent_id = %agent.id, run_id = %context.run_id, "run cancelled");
+                state = AgentState::Failed {
+                    error: "cancelled by user".into(),
+                };
+                break;
+            }
 
             if iterations > agent.execution_policy.max_iterations {
                 warn!(
@@ -234,6 +369,63 @@ impl AgentRuntime {
                     error: "token budget exceeded".into(),
                 };
                 break;
+            }
+
+            // ── Reflection checkpoint ────────────────────────────────
+            if agent.execution_policy.planning_enabled
+                && tool_calls_since_reflection >= agent.execution_policy.reflection_interval
+                && tool_calls_since_reflection > 0
+            {
+                info!(agent_id = %agent.id, "entering reflection phase");
+                tool_calls_since_reflection = 0;
+
+                let reflection_prompt = if consecutive_errors > 0 {
+                    format!(
+                        "<reflection_prompt>\n\
+                        {} recent tool call(s) resulted in errors. \
+                        Re-evaluate your approach:\n\
+                        1. What went wrong?\n\
+                        2. Should I try a different approach?\n\
+                        3. Is the original plan still valid?\n\
+                        Adjust your strategy if needed.\n\
+                        </reflection_prompt>",
+                        consecutive_errors
+                    )
+                } else {
+                    "<reflection_prompt>\n\
+                    Briefly assess your progress:\n\
+                    1. Am I making progress toward the goal?\n\
+                    2. Should I adjust my approach?\n\
+                    Continue with the next step.\n\
+                    </reflection_prompt>"
+                        .to_string()
+                };
+
+                messages.push(ChatMessage::system(&reflection_prompt));
+
+                // Quick reflection call (no tools, short response)
+                let refl_req = CompletionRequest {
+                    model: agent.model.primary.clone(),
+                    messages: messages.clone(),
+                    tools: None,
+                    temperature: agent.model.temperature,
+                    max_tokens: 512,
+                    stream: false,
+                };
+
+                if let Ok((refl_msg, refl_usage)) = self.non_stream_completion(refl_req).await {
+                    total_usage.input_tokens += refl_usage.input_tokens;
+                    total_usage.output_tokens += refl_usage.output_tokens;
+                    total_usage.total_tokens += refl_usage.total_tokens;
+
+                    if let Some(refl_text) = refl_msg.text() {
+                        reflections.push(refl_text.to_string());
+                        info!(agent_id = %agent.id, "reflection: {}", &refl_text[..refl_text.len().min(200)]);
+                        messages.push(refl_msg);
+                    }
+                }
+
+                consecutive_errors = 0;
             }
 
             // Emit LlmCallStarted
@@ -333,10 +525,29 @@ impl AgentRuntime {
 
                         messages.push(response_msg.clone());
 
-                        // Execute tool calls for real
-                        for tc in tool_calls {
-                            let tool_result_str =
-                                self.execute_tool_call(&tc.name, &tc.arguments, agent, &context).await;
+                        // Execute tool calls in parallel for better performance
+                        let mut tool_results = Vec::with_capacity(tool_calls.len());
+                        if tool_calls.len() > 1 {
+                            let futs: Vec<_> = tool_calls.iter().map(|tc| {
+                                self.execute_tool_call(&tc.name, &tc.arguments, agent, &context)
+                            }).collect();
+                            tool_results = futures::future::join_all(futs).await;
+                        } else {
+                            for tc in tool_calls.iter() {
+                                let r = self.execute_tool_call(&tc.name, &tc.arguments, agent, &context).await;
+                                tool_results.push(r);
+                            }
+                        }
+
+                        for (tc, tool_result_str) in tool_calls.iter().zip(tool_results) {
+                            // Track errors for reflection
+                            if tool_result_str.starts_with("Error:") {
+                                consecutive_errors += 1;
+                            } else {
+                                consecutive_errors = 0;
+                            }
+
+                            tool_calls_since_reflection += 1;
                             messages.push(ChatMessage::tool_result(&tc.id, &tool_result_str));
                         }
 
@@ -415,6 +626,8 @@ impl AgentRuntime {
 
         // ── Post-run: store session messages ─────────────────────────
 
+        let mut extracted_facts: Vec<String> = Vec::new();
+
         if let Some(ref memory_store) = self.memory_store {
             // Store user message
             let _ = memory_store.store_session_message(NewSessionMessage {
@@ -441,6 +654,40 @@ impl AgentRuntime {
                     tokens: None,
                 });
             }
+
+            // ── Auto-extract facts from conversation ─────────────────
+            if agent.execution_policy.auto_extract_facts && state == AgentState::Completed {
+                extracted_facts = self
+                    .extract_facts(input, final_response.as_deref(), agent, &context, memory_store)
+                    .await;
+            }
+
+            // ── Store conversation summary for long conversations ────
+            if state == AgentState::Completed {
+                if let Some(ref response) = final_response {
+                    let summary = format!(
+                        "User asked: {} | Agent responded: {}",
+                        &input[..input.len().min(200)],
+                        &response[..response.len().min(300)]
+                    );
+                    let _ = memory_store
+                        .store(nexmind_memory::NewMemory {
+                            workspace_id: context.workspace_id.clone(),
+                            agent_id: Some(agent.id.clone()),
+                            memory_type: nexmind_memory::MemoryType::Semantic,
+                            content: summary,
+                            source: nexmind_memory::MemorySource::System,
+                            source_task_id: Some(context.run_id.clone()),
+                            access_policy: nexmind_memory::AccessPolicy::Workspace,
+                            metadata: Some(serde_json::json!({
+                                "type": "conversation_summary",
+                                "session_id": context.session_id,
+                            })),
+                            importance: Some(0.4),
+                        })
+                        .await;
+                }
+            }
         }
 
         // Emit completion/failure event
@@ -458,6 +705,9 @@ impl AgentRuntime {
                 "iterations": iterations,
                 "tokens_used": total_usage.total_tokens,
                 "duration_ms": duration_ms,
+                "has_plan": plan.is_some(),
+                "reflections_count": reflections.len(),
+                "facts_extracted": extracted_facts.len(),
             }),
             &context.workspace_id,
             Some(context.correlation_id.clone()),
@@ -487,8 +737,16 @@ impl AgentRuntime {
             iterations,
             duration_ms,
             tokens = total_usage.total_tokens,
+            has_plan = plan.is_some(),
+            reflections = reflections.len(),
+            facts = extracted_facts.len(),
             "agent run completed"
         );
+
+        // Clean up cancellation token
+        if let Ok(mut runs) = self.active_runs.lock() {
+            runs.remove(&context.run_id);
+        }
 
         Ok(AgentRunResult {
             run_id: context.run_id,
@@ -497,7 +755,94 @@ impl AgentRuntime {
             tokens_used: total_usage,
             iterations,
             duration_ms,
+            plan,
+            reflections,
+            extracted_facts,
         })
+    }
+
+    // ── Fact extraction ────────────────────────────────────────────────
+
+    async fn extract_facts(
+        &self,
+        input: &str,
+        response: Option<&str>,
+        agent: &AgentDefinition,
+        context: &RunContext,
+        memory_store: &MemoryStoreImpl,
+    ) -> Vec<String> {
+        let response_text = response.unwrap_or("");
+        if input.len() + response_text.len() < 50 {
+            return Vec::new();
+        }
+
+        let extraction_prompt = format!(
+            "Extract key facts from this conversation that should be remembered for future interactions.\n\
+             Focus on: user preferences, personal information, project details, technical decisions, and important context.\n\
+             Return each fact on a separate line, prefixed with '- '. Return ONLY facts, no commentary.\n\
+             If there are no important facts to remember, respond with 'NONE'.\n\n\
+             User: {}\n\
+             Assistant: {}",
+            &input[..input.len().min(500)],
+            &response_text[..response_text.len().min(500)]
+        );
+
+        let req = CompletionRequest {
+            model: agent.model.primary.clone(),
+            messages: vec![
+                ChatMessage::system("You extract key facts from conversations. Be concise."),
+                ChatMessage::user(&extraction_prompt),
+            ],
+            tools: None,
+            temperature: 0.3,
+            max_tokens: 512,
+            stream: false,
+        };
+
+        let facts = match self.non_stream_completion(req).await {
+            Ok((msg, _usage)) => {
+                if let Some(text) = msg.text() {
+                    if text.contains("NONE") {
+                        return Vec::new();
+                    }
+                    text.lines()
+                        .filter(|line| line.starts_with("- ") || line.starts_with("* "))
+                        .map(|line| line.trim_start_matches("- ").trim_start_matches("* ").trim().to_string())
+                        .filter(|fact| fact.len() >= 10)
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                }
+            }
+            Err(_) => Vec::new(),
+        };
+
+        // Store extracted facts as semantic memories
+        for fact in &facts {
+            let _ = memory_store
+                .store(nexmind_memory::NewMemory {
+                    workspace_id: context.workspace_id.clone(),
+                    agent_id: Some(agent.id.clone()),
+                    memory_type: nexmind_memory::MemoryType::Semantic,
+                    content: fact.clone(),
+                    source: nexmind_memory::MemorySource::Agent,
+                    source_task_id: Some(context.run_id.clone()),
+                    access_policy: nexmind_memory::AccessPolicy::Workspace,
+                    metadata: Some(serde_json::json!({"type": "auto_extracted_fact"})),
+                    importance: Some(0.6),
+                })
+                .await;
+        }
+
+        if !facts.is_empty() {
+            info!(
+                agent_id = %agent.id,
+                count = facts.len(),
+                "auto-extracted facts stored"
+            );
+        }
+
+        facts
     }
 
     // ── Memory context building ──────────────────────────────────────

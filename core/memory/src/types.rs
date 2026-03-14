@@ -97,6 +97,8 @@ pub struct Memory {
     pub access_policy: AccessPolicy,
     pub metadata: Option<Value>,
     pub expires_at: Option<String>,
+    pub access_count: i64,
+    pub last_accessed_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

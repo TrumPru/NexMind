@@ -55,6 +55,10 @@ After composing the briefing, use send_message with channel "telegram" to delive
             retry: RetryPolicy::default(),
             on_failure: FailureAction::Fail,
             checkpoint_interval: 0,
+            planning_enabled: true,
+            reflection_interval: 3,
+            auto_extract_facts: false,
+            context_summarization_threshold: 4000,
         },
         budget: BudgetPolicy {
             max_tokens_per_run: 10000,

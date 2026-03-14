@@ -231,6 +231,9 @@ impl OpenClawExecutor {
             },
             iterations: 1,
             duration_ms,
+            plan: None,
+            reflections: Vec::new(),
+            extracted_facts: Vec::new(),
         })
     }
 
@@ -258,6 +261,9 @@ impl OpenClawExecutor {
             tokens_used: TokenUsage::default(),
             iterations: 1,
             duration_ms,
+            plan: None,
+            reflections: Vec::new(),
+            extracted_facts: Vec::new(),
         })
     }
 }

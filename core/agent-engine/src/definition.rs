@@ -66,7 +66,23 @@ pub struct ExecutionPolicy {
     pub retry: RetryPolicy,
     pub on_failure: FailureAction,
     pub checkpoint_interval: u32,
+    /// Enable Think→Plan→Act→Reflect loop for complex tasks.
+    #[serde(default = "default_true")]
+    pub planning_enabled: bool,
+    /// Run reflection every N tool calls to self-correct.
+    #[serde(default = "default_reflection_interval")]
+    pub reflection_interval: u32,
+    /// Automatically extract key facts to semantic memory after each run.
+    #[serde(default)]
+    pub auto_extract_facts: bool,
+    /// Summarize conversation context when it exceeds this token threshold.
+    #[serde(default = "default_summarization_threshold")]
+    pub context_summarization_threshold: u32,
 }
+
+fn default_true() -> bool { true }
+fn default_reflection_interval() -> u32 { 3 }
+fn default_summarization_threshold() -> u32 { 6000 }
 
 impl Default for ExecutionPolicy {
     fn default() -> Self {
@@ -77,6 +93,10 @@ impl Default for ExecutionPolicy {
             retry: RetryPolicy::default(),
             on_failure: FailureAction::Fail,
             checkpoint_interval: 0,
+            planning_enabled: true,
+            reflection_interval: 3,
+            auto_extract_facts: true,
+            context_summarization_threshold: 6000,
         }
     }
 }
@@ -143,26 +163,32 @@ impl AgentDefinition {
             name: "NexMind Assistant".into(),
             version: 1,
             description: Some("Default conversational AI assistant".into()),
-            system_prompt: r#"You are NexMind, a powerful AI assistant running locally on the user's machine.
+            system_prompt: r#"You are NexMind, a powerful autonomous AI assistant running locally on the user's machine.
 
 You have access to these capabilities:
 - **Memory**: Remember facts about the user and recall them later (memory_read, memory_write)
 - **Files**: Read, write, and list files in the workspace (fs_read, fs_write, fs_list)
 - **Web**: Fetch data from URLs (http_fetch)
-- **Browser**: Full browser automation — navigate to websites, take screenshots, extract text, click buttons, fill forms (browser_navigate, browser_screenshot, browser_extract_text, browser_extract_links, browser_click, browser_type)
-- **Shell**: Execute shell commands (shell_exec — requires approval)
+- **Browser**: Full browser automation — navigate, screenshots, extract text/links, click, type (browser_navigate, browser_screenshot, browser_extract_text, browser_extract_links, browser_click, browser_type)
+- **Shell**: Execute shell commands for system tasks (shell_exec — requires approval)
+- **Code Execution**: Run Python, JavaScript, or Bash scripts in a sandboxed environment for calculations, data analysis, and automation (code_exec)
+- **Database**: Query SQLite databases with read-only SQL (db_query)
 - **Messaging**: Send messages via Telegram (send_message)
+- **Notifications**: Send notifications to the user (notify)
+- **Delegation**: Delegate subtasks to specialized agents (delegate_to_agent)
+- **Scheduling**: Create, list, and delete scheduled recurring tasks (schedule_task)
+- **Goals**: Track long-running goals and multi-step projects across sessions (goal_tracker)
+- **Tool Generation**: Create new script-based tools on the fly (generate_tool — requires approval)
 
-When browsing websites:
-1. First use browser_navigate to go to the URL
-2. Use browser_extract_text to read the page content
-3. Use browser_screenshot if you need to see the visual layout
-4. Use browser_click and browser_type to interact with the page
-
-When the user asks to research something online, prefer browser_navigate + browser_extract_text over http_fetch for rich web pages (http_fetch only gets raw HTML).
-
-Remember important information about the user using memory_write.
-When answering questions, check memory_read first to see if you have relevant context."#.into(),
+Guidelines:
+- When browsing, use browser_navigate + browser_extract_text for rich pages (http_fetch only gets raw HTML).
+- Remember important information about the user using memory_write.
+- Check memory_read first for relevant context before answering questions.
+- For complex tasks, break them into steps. Use code_exec for calculations and data processing.
+- Delegate specialized subtasks to other agents when appropriate.
+- Use schedule_task to set up recurring tasks (e.g., reminders, daily checks).
+- Track multi-step projects with goal_tracker so you remember progress across sessions.
+- Use shell_exec for system operations like installing packages, running builds, managing processes."#.into(),
             model: ModelConfig::default(),
             tools: vec![
                 "memory_read".into(),
@@ -171,6 +197,15 @@ When answering questions, check memory_read first to see if you have relevant co
                 "fs_write".into(),
                 "fs_list".into(),
                 "http_fetch".into(),
+                "shell_exec".into(),
+                "send_message".into(),
+                "notify".into(),
+                "code_exec".into(),
+                "delegate_to_agent".into(),
+                "db_query".into(),
+                "schedule_task".into(),
+                "goal_tracker".into(),
+                "generate_tool".into(),
                 "browser_navigate".into(),
                 "browser_screenshot".into(),
                 "browser_extract_text".into(),
@@ -192,6 +227,15 @@ When answering questions, check memory_read first to see if you have relevant co
                 "fs:read".into(),
                 "fs:write".into(),
                 "network:outbound".into(),
+                "shell:exec".into(),
+                "message:send".into(),
+                "notification:send".into(),
+                "code:exec".into(),
+                "agent:delegate".into(),
+                "db:read".into(),
+                "scheduler:manage".into(),
+                "goal:manage".into(),
+                "tool:generate".into(),
                 "browser:navigate".into(),
                 "browser:screenshot".into(),
                 "browser:read".into(),

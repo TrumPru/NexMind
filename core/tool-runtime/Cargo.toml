@@ -8,6 +8,7 @@ nexmind-security = { workspace = true }
 nexmind-event-bus = { workspace = true }
 nexmind-memory = { workspace = true }
 nexmind-storage = { workspace = true }
+nexmind-scheduler = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -16,6 +17,7 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 ulid = { workspace = true }
 chrono = { workspace = true }
+rusqlite = { workspace = true }
 reqwest = { version = "0.12", features = ["json", "multipart"], optional = true }
 chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
 base64 = { version = "0.22", optional = true }

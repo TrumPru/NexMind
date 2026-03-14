@@ -8,6 +8,7 @@ pub enum AgentState {
     Idle,
     Planning,
     Executing,
+    Reflecting,
     WaitingApproval { approval_id: String },
     Completed,
     Failed { error: String },
@@ -21,6 +22,7 @@ impl AgentState {
             AgentState::Idle => "idle",
             AgentState::Planning => "planning",
             AgentState::Executing => "executing",
+            AgentState::Reflecting => "reflecting",
             AgentState::WaitingApproval { .. } => "waiting_approval",
             AgentState::Completed => "completed",
             AgentState::Failed { .. } => "failed",
@@ -43,6 +45,12 @@ impl AgentState {
             (Executing, Suspended { .. }) |
             (Executing, WaitingApproval { .. }) |
             (Executing, Planning) |
+            (Executing, Reflecting) |
+            // From Reflecting
+            (Reflecting, Executing) |
+            (Reflecting, Planning) |
+            (Reflecting, Completed) |
+            (Reflecting, Failed { .. }) |
             // From WaitingApproval
             (WaitingApproval { .. }, Executing) |
             (WaitingApproval { .. }, Suspended { .. }) |
