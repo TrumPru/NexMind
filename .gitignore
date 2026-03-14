@@ -1,0 +1,55 @@
+# Build
+/target/
+
+# Runtime data (SQLite databases, artifacts, user data)
+/data/
+**/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Screenshots from browser automation
+**/screenshots/
+
+# Backups
+**/backups/
+
+# Credentials and secrets
+.env
+.env.*
+*.enc
+credentials.json
+credentials.enc
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+# Node modules (for Telegram Mini App)
+node_modules/
+dist/
+.pnpm-store/
+
+# Claude Code prompts (not needed in repo)
+NexMind_Day*_coding_prompt.md
+NexMind_Hotfix_*.md
+NexMind_Feature_Pack.md
+NexMind_SystemPrompt_Browser.md
+NexMind_Prompt_*_ready.md
