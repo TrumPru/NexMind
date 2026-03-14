@@ -155,7 +155,7 @@ impl MessageRouter {
 
         // 3. Route to agent based on content type
         let response_text = match &msg.content {
-            InboundContent::Text(text) => self.run_agent_for_text(text).await,
+            InboundContent::Text(text) => self.run_agent_for_text(text, &chat_id).await,
             InboundContent::Command { command, args } => {
                 self.handle_command(command, args, &msg).await
             }
@@ -166,7 +166,7 @@ impl MessageRouter {
                 self.handle_callback_query(data, &msg.sender_id).await
             }
             InboundContent::Voice { file_id, duration_secs } => {
-                self.handle_voice(file_id, *duration_secs, &connector_id).await
+                self.handle_voice(file_id, *duration_secs, &connector_id, &chat_id).await
             }
             InboundContent::Document { file_name, .. } => {
                 Some(format!(
@@ -203,7 +203,7 @@ impl MessageRouter {
     }
 
     /// Run the default agent with a text input.
-    async fn run_agent_for_text(&self, text: &str) -> Option<String> {
+    async fn run_agent_for_text(&self, text: &str, chat_id: &str) -> Option<String> {
         let agent = match self.agent_registry.get(&self.default_agent_id) {
             Ok(a) => a,
             Err(e) => {
@@ -212,8 +212,11 @@ impl MessageRouter {
             }
         };
 
+        // Use stable session ID derived from chat_id for conversation continuity
+        let session_id = format!("sess_{}", chat_id);
+
         let context = RunContext::new(&self.workspace_id)
-            .with_session(&self.session_id)
+            .with_session(&session_id)
             .with_workspace_path(self.workspace_path.clone());
 
         match self.agent_runtime.run(&agent, text, context).await {
@@ -255,7 +258,7 @@ impl MessageRouter {
         &self,
         command: &str,
         args: &str,
-        _msg: &InboundMessage,
+        msg: &InboundMessage,
     ) -> Option<String> {
         match command {
             "/start" => Some("Welcome to NexMind! Send me any message and I'll help.".into()),
@@ -272,7 +275,7 @@ impl MessageRouter {
                 } else {
                     format!("{} {}", command, args)
                 };
-                self.run_agent_for_text(&full_text).await
+                self.run_agent_for_text(&full_text, &msg.chat_id).await
             }
         }
     }
@@ -283,6 +286,7 @@ impl MessageRouter {
         file_id: &str,
         duration_secs: u32,
         connector_id: &str,
+        chat_id: &str,
     ) -> Option<String> {
         let vp = match &self.voice_processor {
             Some(vp) => vp,
@@ -308,7 +312,7 @@ impl MessageRouter {
         match vp.transcribe(&audio_bytes, format).await {
             Ok(text) => {
                 info!(chars = text.len(), "voice transcribed");
-                self.run_agent_for_text(&text).await
+                self.run_agent_for_text(&text, chat_id).await
             }
             Err(e) => {
                 error!(error = %e, "voice transcription failed");
@@ -436,8 +440,10 @@ impl MessageRouterHandler {
                     }
                 };
 
+                // Use stable session ID derived from chat_id
+                let session_id = format!("sess_{}", chat_id);
                 let context = RunContext::new(&self.workspace_id)
-                    .with_session(&self.session_id)
+                    .with_session(&session_id)
                     .with_workspace_path(self.workspace_path.clone());
 
                 match self.agent_runtime.run(&agent, text, context).await {
@@ -478,7 +484,7 @@ impl MessageRouterHandler {
                 }
             }
             InboundContent::Voice { file_id, duration_secs } => {
-                self.handle_voice(file_id, *duration_secs, &connector_id).await
+                self.handle_voice(file_id, *duration_secs, &connector_id, &chat_id).await
             }
             _ => Some("Unsupported message type.".into()),
         };
@@ -510,6 +516,7 @@ impl MessageRouterHandler {
         file_id: &str,
         duration_secs: u32,
         connector_id: &str,
+        chat_id: &str,
     ) -> Option<String> {
         let vp = match &self.voice_processor {
             Some(vp) => vp,
@@ -535,7 +542,6 @@ impl MessageRouterHandler {
         match vp.transcribe(&audio_bytes, format).await {
             Ok(text) => {
                 info!(chars = text.len(), "voice transcribed (handler)");
-                // Run agent with transcribed text
                 let agent = match self.agent_registry.get(&self.default_agent_id) {
                     Ok(a) => a,
                     Err(e) => {
@@ -544,8 +550,9 @@ impl MessageRouterHandler {
                     }
                 };
 
+                let session_id = format!("sess_{}", chat_id);
                 let context = RunContext::new(&self.workspace_id)
-                    .with_session(&self.session_id)
+                    .with_session(&session_id)
                     .with_workspace_path(self.workspace_path.clone());
 
                 match self.agent_runtime.run(&agent, &text, context).await {
