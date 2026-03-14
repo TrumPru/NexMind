@@ -108,26 +108,62 @@ impl ClaudeCodeProvider {
         None
     }
 
-    /// Build the user/conversation prompt from non-system messages.
+    /// Build the user prompt — only the last user message.
+    /// Conversation history is passed via --system-prompt for context.
     fn build_user_prompt(req: &CompletionRequest) -> String {
-        let mut parts = Vec::new();
+        // Find the last user message
+        for msg in req.conversation_messages().iter().rev() {
+            if let (Role::User, Content::Text { text }) = (&msg.role, &msg.content) {
+                return text.clone();
+            }
+        }
+        String::new()
+    }
 
-        for msg in req.conversation_messages() {
+    /// Build conversation history block to include in system prompt.
+    fn build_conversation_history(req: &CompletionRequest) -> Option<String> {
+        let messages = req.conversation_messages();
+        // Need at least 2 messages (history + current) to have history
+        if messages.len() < 2 {
+            return None;
+        }
+
+        // All messages except the last one are history
+        let history = &messages[..messages.len() - 1];
+        if history.is_empty() {
+            return None;
+        }
+
+        let mut parts = Vec::new();
+        for msg in history {
             match (&msg.role, &msg.content) {
                 (Role::User, Content::Text { text }) => {
-                    parts.push(text.clone());
+                    parts.push(format!("User: {}", text));
                 }
                 (Role::Assistant, Content::Text { text }) => {
-                    parts.push(format!("[Previous response]: {}", text));
+                    // Truncate long assistant responses in history
+                    let truncated = if text.len() > 500 {
+                        format!("{}...", &text[..500])
+                    } else {
+                        text.clone()
+                    };
+                    parts.push(format!("Assistant: {}", truncated));
                 }
                 (Role::Tool, Content::ToolResult { content, .. }) => {
-                    parts.push(format!("[Tool result]: {}", content));
+                    parts.push(format!("Tool result: {}", content));
                 }
                 _ => {}
             }
         }
 
-        parts.join("\n\n")
+        if parts.is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "\n\n<conversation_history>\n{}\n</conversation_history>",
+            parts.join("\n")
+        ))
     }
 
     /// Build a full prompt string (legacy: includes system prompt inline).
@@ -292,9 +328,16 @@ impl ModelProvider for ClaudeCodeProvider {
             if has_tools { "json".to_string() } else { "text".to_string() },
         ];
 
-        // Add system prompt via --system-prompt flag
+        // Add system prompt via --system-prompt flag (with conversation history appended)
         if let Some(system) = req.system_prompt() {
-            args.extend(["--system-prompt".to_string(), system]);
+            let mut full_system = system;
+            // Append conversation history for context continuity
+            if let Some(history) = Self::build_conversation_history(&req) {
+                full_system.push_str(&history);
+            }
+            args.extend(["--system-prompt".to_string(), full_system]);
+        } else if let Some(history) = Self::build_conversation_history(&req) {
+            args.extend(["--system-prompt".to_string(), history]);
         }
 
         // Set model
@@ -465,10 +508,14 @@ mod tests {
             stream: false,
         };
 
+        // user_prompt should only be the last user message
         let prompt = ClaudeCodeProvider::build_user_prompt(&req);
-        assert!(prompt.contains("What is 2+2?"));
-        assert!(prompt.contains("[Previous response]: 4"));
-        assert!(prompt.contains("And 3+3?"));
+        assert_eq!(prompt, "And 3+3?");
+
+        // history should contain previous messages
+        let history = ClaudeCodeProvider::build_conversation_history(&req).unwrap();
+        assert!(history.contains("User: What is 2+2?"));
+        assert!(history.contains("Assistant: 4"));
     }
 
     #[test]
@@ -551,16 +598,16 @@ mod tests {
             stream: false,
         };
 
+        // user_prompt is just the last user message
         let user_prompt = ClaudeCodeProvider::build_user_prompt(&req);
         assert!(!user_prompt.contains("NexMind")); // system excluded
-        assert!(user_prompt.contains("Search for weather"));
-        assert!(user_prompt.contains("[Previous response]: Let me check..."));
-        assert!(user_prompt.contains("[Tool result]: Temperature: 22C"));
-        assert!(user_prompt.contains("Thanks, what about tomorrow?"));
+        assert_eq!(user_prompt, "Thanks, what about tomorrow?");
 
-        let full_prompt = ClaudeCodeProvider::build_prompt_with_system(&req);
-        assert!(full_prompt.contains("<instructions>"));
-        assert!(full_prompt.contains("You are NexMind."));
+        // history contains previous conversation
+        let history = ClaudeCodeProvider::build_conversation_history(&req).unwrap();
+        assert!(history.contains("User: Search for weather"));
+        assert!(history.contains("Assistant: Let me check..."));
+        assert!(history.contains("Tool result: Temperature: 22C"));
     }
 
     #[test]
