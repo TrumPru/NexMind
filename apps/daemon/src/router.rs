@@ -70,6 +70,11 @@ impl MessageRouter {
         self.approval_manager = Some(mgr);
     }
 
+    /// Set the default agent ID for message routing.
+    pub fn set_default_agent(&mut self, agent_id: &str) {
+        self.default_agent_id = agent_id.to_string();
+    }
+
     /// Register a connector.
     pub fn register_connector(&mut self, connector: Arc<dyn Connector>) {
         let id = connector.id().to_string();
@@ -204,6 +209,11 @@ impl MessageRouter {
 
     /// Run the default agent with a text input.
     async fn run_agent_for_text(&self, text: &str, chat_id: &str) -> Option<String> {
+        // If default agent is OpenClaw, route directly through OpenClaw gateway
+        if self.default_agent_id == "agt_openclaw" {
+            return self.run_via_openclaw(text, chat_id).await;
+        }
+
         let agent = match self.agent_registry.get(&self.default_agent_id) {
             Ok(a) => a,
             Err(e) => {
@@ -224,6 +234,56 @@ impl MessageRouter {
             Err(e) => {
                 error!(error = %e, "agent run failed");
                 Some(format!("Error: {}", e))
+            }
+        }
+    }
+
+    /// Route a message through OpenClaw Gateway's chat completions API.
+    async fn run_via_openclaw(&self, text: &str, chat_id: &str) -> Option<String> {
+        let openclaw_url = std::env::var("OPENCLAW_GATEWAY_URL")
+            .unwrap_or_else(|_| "ws://127.0.0.1:18789".into())
+            .replace("ws://", "http://")
+            .replace("wss://", "https://");
+        let openclaw_token = std::env::var("OPENCLAW_GATEWAY_TOKEN").ok();
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_default();
+
+        let url = format!("{}/v1/chat/completions", openclaw_url.trim_end_matches('/'));
+
+        let body = serde_json::json!({
+            "model": "openclaw",
+            "messages": [{"role": "user", "content": text}],
+            "stream": false,
+            "user": format!("nexmind-{}", chat_id)
+        });
+
+        let mut req = client.post(&url).json(&body);
+        if let Some(token) = &openclaw_token {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        match req.send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                    let reply = body["choices"][0]["message"]["content"]
+                        .as_str()
+                        .unwrap_or("No response from OpenClaw")
+                        .to_string();
+                    Some(reply)
+                } else {
+                    let status = resp.status();
+                    let err = resp.text().await.unwrap_or_default();
+                    error!(status = %status, "OpenClaw request failed: {}", err);
+                    Some(format!("OpenClaw error: {}", status))
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "OpenClaw connection failed");
+                Some(format!("Cannot reach OpenClaw: {}", e))
             }
         }
     }
@@ -433,22 +493,26 @@ impl MessageRouterHandler {
         // Route
         let response_text = match &msg.content {
             InboundContent::Text(text) => {
-                let agent = match self.agent_registry.get(&self.default_agent_id) {
-                    Ok(a) => a,
-                    Err(_) => {
-                        return;
+                // If using OpenClaw agent, route through gateway
+                if self.default_agent_id == "agt_openclaw" {
+                    self.run_via_openclaw(text, &chat_id).await
+                } else {
+                    let agent = match self.agent_registry.get(&self.default_agent_id) {
+                        Ok(a) => a,
+                        Err(_) => {
+                            return;
+                        }
+                    };
+
+                    let session_id = format!("sess_{}", chat_id);
+                    let context = RunContext::new(&self.workspace_id)
+                        .with_session(&session_id)
+                        .with_workspace_path(self.workspace_path.clone());
+
+                    match self.agent_runtime.run(&agent, text, context).await {
+                        Ok(result) => result.response,
+                        Err(e) => Some(format!("Error: {}", e)),
                     }
-                };
-
-                // Use stable session ID derived from chat_id
-                let session_id = format!("sess_{}", chat_id);
-                let context = RunContext::new(&self.workspace_id)
-                    .with_session(&session_id)
-                    .with_workspace_path(self.workspace_path.clone());
-
-                match self.agent_runtime.run(&agent, text, context).await {
-                    Ok(result) => result.response,
-                    Err(e) => Some(format!("Error: {}", e)),
                 }
             }
             InboundContent::Command { command, .. } => match command.as_str() {
@@ -506,6 +570,49 @@ impl MessageRouterHandler {
                         ..Default::default()
                     })
                     .await;
+            }
+        }
+    }
+
+    /// Route through OpenClaw Gateway.
+    async fn run_via_openclaw(&self, text: &str, chat_id: &str) -> Option<String> {
+        let openclaw_url = std::env::var("OPENCLAW_GATEWAY_URL")
+            .unwrap_or_else(|_| "ws://127.0.0.1:18789".into())
+            .replace("ws://", "http://")
+            .replace("wss://", "https://");
+        let openclaw_token = std::env::var("OPENCLAW_GATEWAY_TOKEN").ok();
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_default();
+
+        let url = format!("{}/v1/chat/completions", openclaw_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": "openclaw",
+            "messages": [{"role": "user", "content": text}],
+            "stream": false,
+            "user": format!("nexmind-{}", chat_id)
+        });
+
+        let mut req = client.post(&url).json(&body);
+        if let Some(token) = &openclaw_token {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                Some(body["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
+            }
+            Ok(resp) => {
+                let s = resp.status();
+                error!(status = %s, "OpenClaw error");
+                Some(format!("OpenClaw error: {}", s))
+            }
+            Err(e) => {
+                error!(error = %e, "OpenClaw unreachable");
+                Some(format!("Cannot reach OpenClaw: {}", e))
             }
         }
     }
