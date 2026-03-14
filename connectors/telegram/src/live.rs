@@ -7,7 +7,7 @@ use tracing::{info, warn, error};
 
 use nexmind_connector::{
     ChannelStatus, ConnectorError, FilePayload, HealthStatus, MessageId, OutboundMessage,
-    ParseMode, PlatformExtras, InlineButton,
+    ParseMode, PlatformExtras,
 };
 
 const TELEGRAM_API_BASE: &str = "https://api.telegram.org/bot";

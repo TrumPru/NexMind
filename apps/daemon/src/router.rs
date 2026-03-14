@@ -13,6 +13,7 @@ use nexmind_connector::{
     OutboundMessage, ParseMode,
 };
 use nexmind_event_bus::EventBus;
+use nexmind_telegram::formatting::markdown_to_telegram_html;
 use nexmind_tool_runtime::tools::{AudioFormat, VoiceProcessor};
 
 /// Message router — bridges connectors ↔ agent runtime.
@@ -183,10 +184,12 @@ impl MessageRouter {
         // 5. Send response back through same connector
         if let Some(text) = response_text {
             if let Some(conn) = self.connectors.get(&connector_id) {
+                // Convert markdown to Telegram HTML
+                let html_text = markdown_to_telegram_html(&text);
                 let result = conn
                     .send_message(OutboundMessage {
                         chat_id: chat_id.clone(),
-                        text,
+                        text: html_text,
                         parse_mode: Some(ParseMode::Html),
                         ..Default::default()
                     })
@@ -488,10 +491,11 @@ impl MessageRouterHandler {
         // Send response
         if let Some(text) = response_text {
             if let Some(conn) = self.connectors.get(&connector_id) {
+                let html_text = markdown_to_telegram_html(&text);
                 let _ = conn
                     .send_message(OutboundMessage {
                         chat_id,
-                        text,
+                        text: html_text,
                         parse_mode: Some(ParseMode::Html),
                         ..Default::default()
                     })
