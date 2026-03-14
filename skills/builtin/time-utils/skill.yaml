@@ -1,0 +1,26 @@
+id: time-utils
+name: "Time Utilities"
+version: "1.0.0"
+description: "Time, date, and timezone utilities"
+author: "nexmind-builtin"
+tags: ["time", "date", "timezone", "clock", "timer"]
+provides:
+  tools:
+    - id: current_time
+      description: "Get current date and time"
+      parameters:
+        timezone: { type: string, default: "UTC" }
+    - id: timezone_convert
+      description: "Convert time between timezones"
+      parameters:
+        time: { type: string, required: true }
+        from_tz: { type: string, required: true }
+        to_tz: { type: string, required: true }
+    - id: set_timer
+      description: "Set a reminder timer"
+      parameters:
+        duration_seconds: { type: integer, required: true }
+        message: { type: string, required: true }
+runtime:
+  type: native
+  entry: "builtin:time_utils"

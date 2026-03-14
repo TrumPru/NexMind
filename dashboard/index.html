@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NexMind Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <style>
+    :root { --sidebar-width: 220px; }
+    body { margin: 0; display: flex; min-height: 100vh; }
+    nav.sidebar { width: var(--sidebar-width); background: var(--pico-card-background-color); border-right: 1px solid var(--pico-muted-border-color); padding: 1rem; display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; }
+    nav.sidebar h2 { margin: 0 0 1.5rem 0; font-size: 1.3rem; }
+    nav.sidebar a { display: block; padding: 0.5rem 0.75rem; margin: 0.15rem 0; border-radius: 6px; text-decoration: none; color: var(--pico-color); cursor: pointer; }
+    nav.sidebar a:hover, nav.sidebar a.active { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
+    main.content { margin-left: var(--sidebar-width); flex: 1; padding: 1.5rem; max-width: 960px; }
+    .chat-messages { max-height: 400px; overflow-y: auto; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+    .chat-msg { margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 6px; }
+    .chat-msg.user { background: var(--pico-primary-background); color: var(--pico-primary-inverse); margin-left: 20%; }
+    .chat-msg.assistant { background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); margin-right: 20%; }
+    .chat-input { display: flex; gap: 0.5rem; }
+    .chat-input textarea { flex: 1; resize: vertical; min-height: 60px; }
+    .log-area { height: 400px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; font-family: monospace; font-size: 0.85rem; padding: 1rem; border-radius: 6px; white-space: pre-wrap; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .stat-card { background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 8px; padding: 1rem; text-align: center; }
+    .stat-card .value { font-size: 1.8rem; font-weight: bold; color: var(--pico-primary); }
+    .stat-card .label { font-size: 0.85rem; color: var(--pico-muted-color); }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+    .badge-warn { background: #f0ad4e; color: #fff; }
+    .badge-ok { background: #5cb85c; color: #fff; }
+    .badge-danger { background: #d9534f; color: #fff; }
+  </style>
+</head>
+<body x-data="app()" x-init="init()">
+
+  <nav class="sidebar">
+    <h2>NexMind</h2>
+    <template x-for="v in views" :key="v.id">
+      <a :class="{ active: view === v.id }" @click="view = v.id" x-text="v.label"></a>
+    </template>
+    <div style="margin-top:auto; font-size:0.8rem; color:var(--pico-muted-color);">
+      <span x-text="status"></span>
+    </div>
+  </nav>
+
+  <main class="content">
+    <!-- Chat -->
+    <div x-show="view==='chat'">
+      <h3>Chat</h3>
+      <div class="chat-messages" x-ref="chatBox">
+        <template x-for="m in messages" :key="m.id">
+          <div class="chat-msg" :class="m.role">
+            <small x-text="m.role" style="text-transform:capitalize;opacity:0.6"></small>
+            <div x-text="m.text"></div>
+          </div>
+        </template>
+        <div x-show="chatLoading"><em>Thinking...</em></div>
+      </div>
+      <div class="chat-input">
+        <textarea x-model="chatInput" @keydown.ctrl.enter="sendChat()" placeholder="Type a message... (Ctrl+Enter to send)"></textarea>
+        <button @click="sendChat()" :disabled="chatLoading">Send</button>
+      </div>
+    </div>
+
+    <!-- Agents -->
+    <div x-show="view==='agents'">
+      <h3>Agents</h3>
+      <button @click="loadAgents()" class="outline" style="margin-bottom:1rem">Refresh</button>
+      <table>
+        <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Description</th></tr></thead>
+        <tbody>
+          <template x-for="a in agents" :key="a.id">
+            <tr>
+              <td x-text="a.id" style="font-family:monospace;font-size:0.85rem"></td>
+              <td x-text="a.name"></td>
+              <td><span class="badge badge-ok" x-text="a.status"></span></td>
+              <td x-text="a.description"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <p x-show="agents.length===0">No agents registered.</p>
+    </div>
+
+    <!-- Approvals -->
+    <div x-show="view==='approvals'">
+      <h3>Pending Approvals</h3>
+      <button @click="loadApprovals()" class="outline" style="margin-bottom:1rem">Refresh</button>
+      <template x-for="ap in approvals" :key="ap.id">
+        <article>
+          <header>
+            <strong x-text="ap.tool_id"></strong>
+            <span class="badge badge-warn" x-text="ap.risk_level" style="margin-left:0.5rem"></span>
+          </header>
+          <p x-text="ap.action_description"></p>
+          <small>Agent: <span x-text="ap.agent_id"></span> | Created: <span x-text="ap.created_at"></span></small>
+          <footer style="display:flex;gap:0.5rem">
+            <button @click="approvalAction(ap.id, 'approve')" class="outline">Approve</button>
+            <button @click="approvalAction(ap.id, 'deny')" class="outline secondary">Deny</button>
+          </footer>
+        </article>
+      </template>
+      <p x-show="approvals.length===0">No pending approvals.</p>
+    </div>
+
+    <!-- Memory (placeholder) -->
+    <div x-show="view==='memory'">
+      <h3>Memory</h3>
+      <p>Memory browser coming soon.</p>
+    </div>
+
+    <!-- Costs -->
+    <div x-show="view==='costs'">
+      <h3>Costs</h3>
+      <div style="margin-bottom:1rem">
+        <select x-model="costPeriod" @change="loadCosts()" style="width:auto;display:inline-block">
+          <option value="today">Today</option>
+          <option value="7d">Last 7 Days</option>
+          <option value="30d">Last 30 Days</option>
+        </select>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="value" x-text="'$' + (costs.total_microdollars / 1000000).toFixed(4)"></div><div class="label">Total Cost</div></div>
+        <div class="stat-card"><div class="value" x-text="costs.total_requests"></div><div class="label">Requests</div></div>
+        <div class="stat-card"><div class="value" x-text="costs.total_input_tokens?.toLocaleString() || '0'"></div><div class="label">Input Tokens</div></div>
+        <div class="stat-card"><div class="value" x-text="costs.total_output_tokens?.toLocaleString() || '0'"></div><div class="label">Output Tokens</div></div>
+      </div>
+      <h4>By Model</h4>
+      <table>
+        <thead><tr><th>Model</th><th>Cost</th></tr></thead>
+        <tbody>
+          <template x-for="m in costs.by_model || []" :key="m.model">
+            <tr><td x-text="m.model"></td><td x-text="'$' + (m.cost_microdollars / 1000000).toFixed(4)"></td></tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Logs -->
+    <div x-show="view==='logs'">
+      <h3>Logs</h3>
+      <button @click="loadLogs()" class="outline" style="margin-bottom:1rem">Refresh</button>
+      <div class="log-area" x-ref="logArea" x-text="logText"></div>
+    </div>
+
+    <!-- Settings -->
+    <div x-show="view==='settings'">
+      <h3>Settings / Status</h3>
+      <button @click="loadHealth()" class="outline" style="margin-bottom:1rem">Refresh</button>
+      <table>
+        <tbody>
+          <tr><td>Status</td><td><span class="badge" :class="health.status==='ok' ? 'badge-ok' : 'badge-danger'" x-text="health.status"></span></td></tr>
+          <tr><td>Version</td><td x-text="health.version"></td></tr>
+          <tr><td>Uptime</td><td x-text="formatUptime(health.uptime_seconds)"></td></tr>
+          <tr><td>Database</td><td x-text="health.database_ok ? 'OK' : 'Error'"></td></tr>
+          <tr><td>Active Agents</td><td x-text="health.active_agents"></td></tr>
+          <tr><td>Pending Approvals</td><td x-text="health.pending_approvals"></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    function app() {
+      const token = new URLSearchParams(window.location.search).get('token') || '';
+      return {
+        view: 'chat',
+        views: [
+          { id: 'chat', label: 'Chat' },
+          { id: 'agents', label: 'Agents' },
+          { id: 'approvals', label: 'Approvals' },
+          { id: 'memory', label: 'Memory' },
+          { id: 'costs', label: 'Costs' },
+          { id: 'logs', label: 'Logs' },
+          { id: 'settings', label: 'Settings' },
+        ],
+        status: 'Connecting...',
+        token,
+        // Chat
+        messages: [],
+        chatInput: '',
+        chatLoading: false,
+        msgCounter: 0,
+        // Agents
+        agents: [],
+        // Approvals
+        approvals: [],
+        // Costs
+        costPeriod: '7d',
+        costs: { total_microdollars: 0, total_requests: 0, total_input_tokens: 0, total_output_tokens: 0, by_model: [] },
+        // Logs
+        logText: '',
+        // Health
+        health: {},
+
+        async init() {
+          await this.loadHealth();
+          this.status = this.health.status === 'ok' ? 'Connected' : 'Degraded';
+        },
+
+        api(path, opts = {}) {
+          const sep = path.includes('?') ? '&' : '?';
+          return fetch(path + sep + 'token=' + encodeURIComponent(this.token), {
+            headers: { 'Content-Type': 'application/json' },
+            ...opts,
+          }).then(r => { if (r.status === 401) throw new Error('Unauthorized'); return r.json(); });
+        },
+
+        async sendChat() {
+          const text = this.chatInput.trim();
+          if (!text) return;
+          this.messages.push({ id: ++this.msgCounter, role: 'user', text });
+          this.chatInput = '';
+          this.chatLoading = true;
+          try {
+            const data = await this.api('/api/chat', { method: 'POST', body: JSON.stringify({ message: text }) });
+            this.messages.push({ id: ++this.msgCounter, role: 'assistant', text: data.response || '(no response)' });
+          } catch (e) {
+            this.messages.push({ id: ++this.msgCounter, role: 'assistant', text: 'Error: ' + e.message });
+          }
+          this.chatLoading = false;
+          this.$nextTick(() => { if (this.$refs.chatBox) this.$refs.chatBox.scrollTop = this.$refs.chatBox.scrollHeight; });
+        },
+
+        async loadAgents() { try { const d = await this.api('/api/agents'); this.agents = d.agents || []; } catch (e) { console.error(e); } },
+        async loadApprovals() { try { const d = await this.api('/api/approvals'); this.approvals = d.approvals || []; } catch (e) { console.error(e); } },
+        async loadCosts() { try { this.costs = await this.api('/api/costs?period=' + this.costPeriod); } catch (e) { console.error(e); } },
+        async loadLogs() { try { const d = await this.api('/api/logs'); this.logText = (d.entries || []).join('\n'); this.$nextTick(() => { if (this.$refs.logArea) this.$refs.logArea.scrollTop = this.$refs.logArea.scrollHeight; }); } catch (e) { console.error(e); } },
+        async loadHealth() { try { this.health = await this.api('/api/health'); } catch (e) { this.health = { status: 'unreachable' }; } },
+
+        async approvalAction(id, action) {
+          try {
+            await this.api('/api/approvals/' + id + '/' + action, { method: 'POST' });
+            await this.loadApprovals();
+          } catch (e) { alert('Error: ' + e.message); }
+        },
+
+        formatUptime(s) {
+          if (!s) return '0s';
+          const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+          return (h > 0 ? h + 'h ' : '') + (m > 0 ? m + 'm ' : '') + sec + 's';
+        },
+      };
+    }
+  </script>
+</body>
+</html>

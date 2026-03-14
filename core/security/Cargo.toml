@@ -1,0 +1,20 @@
+[package]
+name = "nexmind-security"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nexmind-storage = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+ulid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+rusqlite = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

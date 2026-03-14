@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "core/storage",
+    "core/event-bus",
+    "core/security",
+    "core/model-router",
+    "core/memory",
+    "core/tool-runtime",
+    "core/agent-engine",
+    "core/connector",
+    "core/workflow-engine",
+    "core/scheduler",
+    "core/skill-registry",
+    "connectors/telegram",
+    "apps/daemon",
+    "apps/cli",
+]
+
+[workspace.dependencies]
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+ulid = { version = "1", features = ["serde"] }
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+clap = { version = "4", features = ["derive"] }
+tonic = "0.12"
+tonic-build = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+async-trait = "0.1"
+
+# Workspace crates
+nexmind-storage = { path = "core/storage" }
+nexmind-event-bus = { path = "core/event-bus" }
+nexmind-security = { path = "core/security" }
+nexmind-model-router = { path = "core/model-router" }
+nexmind-memory = { path = "core/memory" }
+nexmind-tool-runtime = { path = "core/tool-runtime" }
+nexmind-agent-engine = { path = "core/agent-engine" }
+nexmind-connector = { path = "core/connector" }
+nexmind-workflow-engine = { path = "core/workflow-engine" }
+nexmind-scheduler = { path = "core/scheduler" }
+nexmind-skill-registry = { path = "core/skill-registry" }
+serde_yaml = "0.9"
+nexmind-telegram = { path = "connectors/telegram" }
+reqwest = { version = "0.12", features = ["json", "multipart"], default-features = false }
+lettre = { version = "0.11", features = ["tokio1-native-tls", "smtp-transport", "builder"] }
+imap = "2"
+native-tls = "0.2"
+cron = "0.13"
+chrono-tz = "0.10"
+axum = "0.7"
+tower = "0.5"
+rand = "0.8"

@@ -1,0 +1,22 @@
+id: system-info
+name: "System Info"
+version: "1.0.0"
+description: "System monitoring and information"
+author: "nexmind-builtin"
+tags: ["system", "monitor", "disk", "cpu", "process"]
+provides:
+  tools:
+    - id: disk_usage
+      description: "Get disk usage information"
+    - id: cpu_info
+      description: "Get CPU information and load"
+    - id: process_list
+      description: "List running processes"
+      parameters:
+        filter: { type: string, required: false }
+requires:
+  permissions:
+    - "shell:exec"
+runtime:
+  type: native
+  entry: "builtin:system_info"

@@ -1,0 +1,23 @@
+id: summarizer
+name: "Summarizer"
+version: "1.0.0"
+description: "Summarize long text or web pages"
+author: "nexmind-builtin"
+tags: ["summarize", "summary", "text", "url"]
+provides:
+  tools:
+    - id: summarize_text
+      description: "Summarize a long text into key points"
+      parameters:
+        text: { type: string, required: true }
+        max_length: { type: integer, default: 200 }
+    - id: summarize_url
+      description: "Fetch and summarize a web page"
+      parameters:
+        url: { type: string, required: true }
+requires:
+  permissions:
+    - "network:outbound"
+runtime:
+  type: native
+  entry: "builtin:summarizer"

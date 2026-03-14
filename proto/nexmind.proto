@@ -1,0 +1,226 @@
+syntax = "proto3";
+
+package nexmind;
+
+service NexMind {
+  // Chat
+  rpc SendMessage(SendMessageRequest) returns (stream ChatEvent);
+
+  // Agents
+  rpc ListAgents(ListAgentsRequest) returns (AgentList);
+  rpc GetAgentStatus(AgentId) returns (AgentStatus);
+  rpc CreateAgent(AgentDefinition) returns (AgentId);
+
+  // Tasks
+  rpc ListTasks(TaskFilter) returns (TaskList);
+  rpc SubscribeTaskUpdates(TaskId) returns (stream TaskEvent);
+  rpc CancelTask(TaskId) returns (CancelResult);
+
+  // Approvals
+  rpc ListPendingApprovals(Empty) returns (ApprovalList);
+  rpc Approve(ApprovalDecision) returns (ApprovalResult);
+
+  // Memory
+  rpc QueryMemory(MemoryQuery) returns (MemoryResults);
+
+  // Workflows
+  rpc RunWorkflow(WorkflowId) returns (stream WorkflowEvent);
+
+  // System
+  rpc GetHealth(Empty) returns (HealthStatus);
+  rpc GetCostSummary(CostQuery) returns (CostSummary);
+}
+
+// ── Common ─────────────────────────────────────────────────────
+
+message Empty {}
+
+message AgentId {
+  string id = 1;
+}
+
+message TaskId {
+  string id = 1;
+}
+
+message WorkflowId {
+  string id = 1;
+}
+
+// ── Chat ───────────────────────────────────────────────────────
+
+message SendMessageRequest {
+  string workspace_id = 1;
+  string agent_id = 2;
+  string text = 3;
+  repeated Attachment attachments = 4;
+}
+
+message Attachment {
+  string filename = 1;
+  string mime_type = 2;
+  bytes data = 3;
+}
+
+message ChatEvent {
+  string event_type = 1;  // "text_delta", "tool_call", "tool_result", "done", "error"
+  string data = 2;        // JSON payload
+  string agent_id = 3;
+  string run_id = 4;
+}
+
+// ── Agents ─────────────────────────────────────────────────────
+
+message ListAgentsRequest {
+  string workspace_id = 1;
+  optional string status_filter = 2;
+}
+
+message AgentDefinition {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  string definition_json = 4;  // Full agent definition as JSON
+}
+
+message AgentList {
+  repeated AgentSummary agents = 1;
+}
+
+message AgentSummary {
+  string id = 1;
+  string name = 2;
+  string status = 3;
+  string description = 4;
+  int32 version = 5;
+}
+
+message AgentStatus {
+  string id = 1;
+  string status = 2;
+  string current_run_id = 3;
+  int64 total_runs = 4;
+  int64 cost_microdollars_today = 5;
+}
+
+// ── Tasks ──────────────────────────────────────────────────────
+
+message TaskFilter {
+  string workspace_id = 1;
+  optional string agent_id = 2;
+  optional string status = 3;
+  int32 limit = 4;
+}
+
+message TaskList {
+  repeated TaskSummary tasks = 1;
+}
+
+message TaskSummary {
+  string id = 1;
+  string agent_id = 2;
+  string status = 3;
+  string created_at = 4;
+  string updated_at = 5;
+}
+
+message TaskEvent {
+  string task_id = 1;
+  string event_type = 2;  // "status_change", "progress", "output", "error"
+  string data = 3;
+}
+
+message CancelResult {
+  bool success = 1;
+  string message = 2;
+}
+
+// ── Approvals ──────────────────────────────────────────────────
+
+message ApprovalList {
+  repeated ApprovalSummary approvals = 1;
+}
+
+message ApprovalSummary {
+  string id = 1;
+  string agent_id = 2;
+  string tool_id = 3;
+  string action_description = 4;
+  string risk_level = 5;
+  string created_at = 6;
+  string expires_at = 7;
+}
+
+message ApprovalDecision {
+  string approval_id = 1;
+  bool approved = 2;
+  string decided_by = 3;
+  optional string note = 4;
+}
+
+message ApprovalResult {
+  bool success = 1;
+  string message = 2;
+}
+
+// ── Memory ─────────────────────────────────────────────────────
+
+message MemoryQuery {
+  string workspace_id = 1;
+  string query = 2;
+  optional string agent_id = 3;
+  int32 limit = 4;
+}
+
+message MemoryResults {
+  repeated MemoryEntry entries = 1;
+}
+
+message MemoryEntry {
+  string id = 1;
+  string memory_type = 2;
+  string content = 3;
+  float relevance_score = 4;
+  string created_at = 5;
+}
+
+// ── Workflows ──────────────────────────────────────────────────
+
+message WorkflowEvent {
+  string workflow_id = 1;
+  string run_id = 2;
+  string event_type = 3;  // "started", "node_complete", "completed", "failed"
+  string data = 4;
+}
+
+// ── System ─────────────────────────────────────────────────────
+
+message HealthStatus {
+  string status = 1;           // "ok", "degraded", "error"
+  bool database_ok = 2;
+  int64 uptime_seconds = 3;
+  string version = 4;
+  int32 active_agents = 5;
+  int32 pending_approvals = 6;
+}
+
+message CostQuery {
+  string workspace_id = 1;
+  optional string agent_id = 2;
+  string period = 3;  // "today", "week", "month", "all"
+}
+
+message CostSummary {
+  int64 total_microdollars = 1;
+  int32 total_requests = 2;
+  int64 total_input_tokens = 3;
+  int64 total_output_tokens = 4;
+  repeated CostByModel by_model = 5;
+}
+
+message CostByModel {
+  string model = 1;
+  string provider = 2;
+  int64 cost_microdollars = 3;
+  int32 requests = 4;
+}

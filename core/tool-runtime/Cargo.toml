@@ -1,0 +1,37 @@
+[package]
+name = "nexmind-tool-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nexmind-security = { workspace = true }
+nexmind-event-bus = { workspace = true }
+nexmind-memory = { workspace = true }
+nexmind-storage = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+ulid = { workspace = true }
+chrono = { workspace = true }
+reqwest = { version = "0.12", features = ["json", "multipart"], optional = true }
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
+base64 = { version = "0.22", optional = true }
+url = { version = "2", optional = true }
+futures = { version = "0.3", optional = true }
+lettre = { workspace = true, optional = true }
+imap = { workspace = true, optional = true }
+native-tls = { version = "0.2", optional = true }
+
+[features]
+default = ["http", "browser", "email"]
+http = ["reqwest"]
+browser = ["chromiumoxide", "base64", "url", "futures"]
+email = ["lettre", "imap", "native-tls"]
+
+[dev-dependencies]
+tempfile = "3"
+nexmind-model-router = { workspace = true }
+nexmind-skill-registry = { workspace = true }

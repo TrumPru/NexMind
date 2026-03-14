@@ -1,0 +1,21 @@
+id: math
+name: "Calculator"
+version: "1.0.0"
+description: "Mathematical calculations and unit conversion"
+author: "nexmind-builtin"
+tags: ["math", "calculator", "calculate", "units", "convert"]
+provides:
+  tools:
+    - id: calculate
+      description: "Evaluate a mathematical expression"
+      parameters:
+        expression: { type: string, required: true }
+    - id: convert_units
+      description: "Convert between units"
+      parameters:
+        value: { type: number, required: true }
+        from: { type: string, required: true }
+        to: { type: string, required: true }
+runtime:
+  type: native
+  entry: "builtin:math"

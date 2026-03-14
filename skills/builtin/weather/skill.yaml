@@ -1,0 +1,23 @@
+id: weather
+name: "Weather"
+version: "1.0.0"
+description: "Weather forecasts via wttr.in (free, no API key needed)"
+author: "nexmind-builtin"
+tags: ["weather", "forecast", "temperature"]
+provides:
+  tools:
+    - id: get_weather
+      description: "Get current weather for a city"
+      parameters:
+        city: { type: string, required: true }
+    - id: get_forecast
+      description: "Get multi-day weather forecast"
+      parameters:
+        city: { type: string, required: true }
+        days: { type: integer, default: 3 }
+requires:
+  permissions:
+    - "network:outbound:wttr.in"
+runtime:
+  type: native
+  entry: "builtin:weather"

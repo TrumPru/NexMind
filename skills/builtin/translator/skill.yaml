@@ -1,0 +1,17 @@
+id: translator
+name: "Translator"
+version: "1.0.0"
+description: "Translate text between languages using LLM"
+author: "nexmind-builtin"
+tags: ["translate", "language", "translation"]
+provides:
+  tools:
+    - id: translate
+      description: "Translate text between languages"
+      parameters:
+        text: { type: string, required: true }
+        from: { type: string, required: false, description: "Source language (auto-detect if omitted)" }
+        to: { type: string, required: true, description: "Target language" }
+runtime:
+  type: native
+  entry: "builtin:translator"

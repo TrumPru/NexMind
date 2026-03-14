@@ -1,0 +1,20 @@
+id: qr-code
+name: "QR Code"
+version: "1.0.0"
+description: "Generate and read QR codes"
+author: "nexmind-builtin"
+tags: ["qr", "qrcode", "barcode"]
+provides:
+  tools:
+    - id: generate_qr
+      description: "Generate a QR code image from text/URL"
+      parameters:
+        content: { type: string, required: true }
+        size: { type: integer, default: 256 }
+    - id: read_qr
+      description: "Read a QR code from an image file"
+      parameters:
+        image_path: { type: string, required: true }
+runtime:
+  type: native
+  entry: "builtin:qr_code"

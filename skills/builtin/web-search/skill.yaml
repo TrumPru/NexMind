@@ -1,0 +1,19 @@
+id: web-search
+name: "Web Search"
+version: "1.0.0"
+description: "Search the web via DuckDuckGo HTML (free, no API key needed)"
+author: "nexmind-builtin"
+tags: ["search", "web", "google", "duckduckgo"]
+provides:
+  tools:
+    - id: web_search
+      description: "Search the web and return results"
+      parameters:
+        query: { type: string, required: true }
+        max_results: { type: integer, default: 5 }
+requires:
+  permissions:
+    - "network:outbound:html.duckduckgo.com"
+runtime:
+  type: native
+  entry: "builtin:web_search"
