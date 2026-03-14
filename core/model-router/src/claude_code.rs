@@ -147,6 +147,60 @@ impl ClaudeCodeProvider {
         parts.join("\n\n")
     }
 
+    /// Try to extract a tool_use call from the response text.
+    fn parse_tool_use(text: &str) -> Option<ToolCall> {
+        let trimmed = text.trim();
+
+        // Try direct JSON parse
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            // Format: {"tool_use": {"name": "...", "arguments": {...}}}
+            if let Some(tool_use) = json.get("tool_use") {
+                let name = tool_use.get("name")?.as_str()?.to_string();
+                let arguments = tool_use.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+                return Some(ToolCall {
+                    id: format!("call_{}", ulid::Ulid::new()),
+                    name,
+                    arguments,
+                });
+            }
+
+            // Claude Code SDK format: array of content blocks with tool_use type
+            if let Some(arr) = json.as_array() {
+                for block in arr {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                        let name = block.get("name")?.as_str()?.to_string();
+                        let arguments = block.get("input").cloned().unwrap_or(serde_json::json!({}));
+                        return Some(ToolCall {
+                            id: block.get("id").and_then(|i| i.as_str()).unwrap_or("call_1").to_string(),
+                            name,
+                            arguments,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Try to find JSON embedded in text
+        if let Some(start) = trimmed.find("{\"tool_use\"") {
+            if let Some(end_candidate) = trimmed[start..].rfind('}') {
+                let json_str = &trimmed[start..=start + end_candidate];
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    if let Some(tool_use) = json.get("tool_use") {
+                        let name = tool_use.get("name")?.as_str()?.to_string();
+                        let arguments = tool_use.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+                        return Some(ToolCall {
+                            id: format!("call_{}", ulid::Ulid::new()),
+                            name,
+                            arguments,
+                        });
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Parse the response from claude CLI output.
     fn parse_response(output: &str, model: &str, latency_ms: u64) -> Result<CompletionResponse, ModelError> {
         // Try JSON parse first (when --output-format json is used)
@@ -199,7 +253,7 @@ impl ModelProvider for ClaudeCodeProvider {
                 id: "sonnet".into(),
                 display_name: "Claude Sonnet (via Claude Code)".into(),
                 context_window: 200_000,
-                supports_tools: false, // Tool calling not supported via CLI proxy
+                supports_tools: true,
                 supports_vision: false,
                 supports_streaming: true,
                 cost_per_1k_input: 0.0,
@@ -209,7 +263,7 @@ impl ModelProvider for ClaudeCodeProvider {
                 id: "opus".into(),
                 display_name: "Claude Opus (via Claude Code)".into(),
                 context_window: 200_000,
-                supports_tools: false,
+                supports_tools: true,
                 supports_vision: false,
                 supports_streaming: true,
                 cost_per_1k_input: 0.0,
@@ -219,7 +273,7 @@ impl ModelProvider for ClaudeCodeProvider {
                 id: "haiku".into(),
                 display_name: "Claude Haiku (via Claude Code)".into(),
                 context_window: 200_000,
-                supports_tools: false,
+                supports_tools: true,
                 supports_vision: false,
                 supports_streaming: true,
                 cost_per_1k_input: 0.0,
@@ -230,11 +284,12 @@ impl ModelProvider for ClaudeCodeProvider {
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ModelError> {
         let model_id = Self::resolve_model(&req.model);
+        let has_tools = req.tools.as_ref().map_or(false, |t| !t.is_empty());
 
         let mut args = vec![
             "--print".to_string(),
             "--output-format".to_string(),
-            "text".to_string(),
+            if has_tools { "json".to_string() } else { "text".to_string() },
         ];
 
         // Add system prompt via --system-prompt flag
@@ -244,6 +299,31 @@ impl ModelProvider for ClaudeCodeProvider {
 
         // Set model
         args.extend(["--model".to_string(), model_id]);
+
+        // If tools are provided, include them in the system prompt as a tool schema
+        // Claude Code CLI understands tool definitions when passed via prompt
+        if has_tools {
+            if let Some(ref tools) = req.tools {
+                let tool_schema: Vec<serde_json::Value> = tools.iter().map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.input_schema
+                    })
+                }).collect();
+
+                let tools_instruction = format!(
+                    "\n\nYou have access to tools. To use a tool, respond with a JSON object:\n\
+                    {{\"tool_use\": {{\"name\": \"<tool_name>\", \"arguments\": {{...}}}}}}\n\n\
+                    Available tools:\n{}",
+                    serde_json::to_string_pretty(&tool_schema).unwrap_or_default()
+                );
+
+                // Append to the prompt
+                args.push("--append-system-prompt".to_string());
+                args.push(tools_instruction);
+            }
+        }
 
         // Add the user/conversation prompt
         let user_prompt = Self::build_user_prompt(&req);
@@ -268,6 +348,19 @@ impl ModelProvider for ClaudeCodeProvider {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Try to parse tool_use response
+        if has_tools {
+            if let Some(tool_call) = Self::parse_tool_use(&stdout) {
+                return Ok(CompletionResponse {
+                    message: ChatMessage::assistant_tool_calls(vec![tool_call]),
+                    usage: TokenUsage::default(),
+                    model: req.model.clone(),
+                    latency_ms,
+                });
+            }
+        }
+
         Self::parse_response(&stdout, &req.model, latency_ms)
     }
 
@@ -512,7 +605,7 @@ mod tests {
         assert_eq!(models[1].id, "opus");
         assert_eq!(models[2].id, "haiku");
         assert_eq!(models[0].cost_per_1k_input, 0.0);
-        assert!(!models[0].supports_tools);
+        assert!(models[0].supports_tools);
     }
 
     #[test]
