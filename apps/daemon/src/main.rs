@@ -650,21 +650,12 @@ async fn main() -> Result<()> {
 
     message_router.set_approval_manager(approval_manager.clone());
 
-    // If the default model doesn't support tool calling but OpenClaw is available,
-    // use agt_openclaw as the default agent (it routes through OpenClaw which has full tool support)
-    {
-        let default_model = model_router.select_default_model();
-        let has_tool_support = model_router.models().iter().any(|m| {
-            default_model.contains(&m.id) && m.supports_tools
-        });
-
-        if !has_tool_support && std::env::var("OPENCLAW_GATEWAY_URL").is_ok() {
-            message_router.set_default_agent("agt_openclaw");
-            info!(
-                "Default model '{}' lacks tool support → using OpenClaw agent as default",
-                default_model
-            );
-        }
+    // When OpenClaw Gateway is available, use it as the default agent.
+    // OpenClaw provides reliable tool_use (browser, files, shell, memory, etc.)
+    // which Claude Code CLI's prompt-based approach cannot match.
+    if std::env::var("OPENCLAW_GATEWAY_URL").is_ok() {
+        message_router.set_default_agent("agt_openclaw");
+        info!("OpenClaw Gateway available → routing messages through OpenClaw for full tool support");
     }
 
     // Try to set up Telegram connector if token is available
