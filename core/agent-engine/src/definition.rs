@@ -66,7 +66,23 @@ pub struct ExecutionPolicy {
     pub retry: RetryPolicy,
     pub on_failure: FailureAction,
     pub checkpoint_interval: u32,
+    /// Enable Think→Plan→Act→Reflect loop for complex tasks.
+    #[serde(default = "default_true")]
+    pub planning_enabled: bool,
+    /// Run reflection every N tool calls to self-correct.
+    #[serde(default = "default_reflection_interval")]
+    pub reflection_interval: u32,
+    /// Automatically extract key facts to semantic memory after each run.
+    #[serde(default)]
+    pub auto_extract_facts: bool,
+    /// Summarize conversation context when it exceeds this token threshold.
+    #[serde(default = "default_summarization_threshold")]
+    pub context_summarization_threshold: u32,
 }
+
+fn default_true() -> bool { true }
+fn default_reflection_interval() -> u32 { 3 }
+fn default_summarization_threshold() -> u32 { 6000 }
 
 impl Default for ExecutionPolicy {
     fn default() -> Self {
@@ -77,6 +93,10 @@ impl Default for ExecutionPolicy {
             retry: RetryPolicy::default(),
             on_failure: FailureAction::Fail,
             checkpoint_interval: 0,
+            planning_enabled: true,
+            reflection_interval: 3,
+            auto_extract_facts: true,
+            context_summarization_threshold: 6000,
         }
     }
 }

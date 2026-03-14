@@ -1,5 +1,9 @@
+pub mod engine;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub use engine::DagWorkflowEngine;
 
 /// Workflow node types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

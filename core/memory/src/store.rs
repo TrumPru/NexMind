@@ -131,8 +131,8 @@ impl MemoryStoreImpl {
         let metadata_str = mem.metadata.as_ref().map(|m| m.to_string());
 
         conn.execute(
-            "INSERT INTO memories (id, workspace_id, agent_id, memory_type, content, content_hash, embedding, importance, source, source_task_id, access_policy, metadata, expires_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
+            "INSERT INTO memories (id, workspace_id, agent_id, memory_type, content, content_hash, embedding, importance, source, source_task_id, access_policy, metadata, expires_at, access_count, last_accessed_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, NULL, ?14, ?14)",
             params![
                 id,
                 mem.workspace_id,
@@ -233,6 +233,51 @@ impl MemoryStoreImpl {
         Ok(())
     }
 
+    /// Apply time-based decay to memory importance scores.
+    /// Uses last_accessed_at (falling back to created_at) to determine staleness.
+    /// - Memories not accessed for 30+ days: importance reduced by 20%
+    /// - Memories not accessed for 60+ days: importance reduced by 40%
+    /// Pinned memories are never decayed. Minimum importance is 0.1.
+    pub fn decay_importance(&self, workspace_id: &str, _decay_rate: f64) -> Result<u64, MemoryError> {
+        let conn = self.conn()?;
+
+        // 60+ days without access: reduce by 40%
+        let affected_60 = conn.execute(
+            "UPDATE memories SET
+                importance = MAX(0.1, importance * 0.6),
+                updated_at = datetime('now')
+             WHERE workspace_id = ?1
+               AND memory_type != 'pinned'
+               AND julianday('now') - julianday(COALESCE(last_accessed_at, created_at)) >= 60.0",
+            params![workspace_id],
+        ).map_err(|e| MemoryError::Storage(e.to_string()))?;
+
+        // 30-59 days without access: reduce by 20%
+        let affected_30 = conn.execute(
+            "UPDATE memories SET
+                importance = MAX(0.1, importance * 0.8),
+                updated_at = datetime('now')
+             WHERE workspace_id = ?1
+               AND memory_type != 'pinned'
+               AND julianday('now') - julianday(COALESCE(last_accessed_at, created_at)) >= 30.0
+               AND julianday('now') - julianday(COALESCE(last_accessed_at, created_at)) < 60.0",
+            params![workspace_id],
+        ).map_err(|e| MemoryError::Storage(e.to_string()))?;
+
+        Ok((affected_60 + affected_30) as u64)
+    }
+
+    /// Touch a memory to mark it as recently accessed (prevents decay).
+    pub fn touch(&self, memory_id: &str) -> Result<(), MemoryError> {
+        let conn = self.conn()?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE memories SET access_count = access_count + 1, last_accessed_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![now, memory_id],
+        ).map_err(|e| MemoryError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
     /// List memories without search (for browsing). Returns recent memories.
     pub fn list(
         &self,
@@ -264,7 +309,7 @@ impl MemoryStoreImpl {
 
         // Get page
         let sql = format!(
-            "SELECT id, workspace_id, agent_id, memory_type, content, embedding, importance, source, source_task_id, access_policy, metadata, expires_at, created_at, updated_at
+            "SELECT id, workspace_id, agent_id, memory_type, content, embedding, importance, source, source_task_id, access_policy, metadata, expires_at, access_count, last_accessed_at, created_at, updated_at
              FROM memories
              WHERE workspace_id = ?1{}
              ORDER BY importance DESC, created_at DESC
@@ -292,8 +337,10 @@ impl MemoryStoreImpl {
                     access_policy: AccessPolicy::from_str(&row.get::<_, String>(9)?).unwrap_or(AccessPolicy::Workspace),
                     metadata: row.get::<_, Option<String>>(10)?.and_then(|s| serde_json::from_str(&s).ok()),
                     expires_at: row.get(11)?,
-                    created_at: row.get(12)?,
-                    updated_at: row.get(13)?,
+                    access_count: row.get(12)?,
+                    last_accessed_at: row.get(13)?,
+                    created_at: row.get(14)?,
+                    updated_at: row.get(15)?,
                 })
             })
             .map_err(|e| MemoryError::Storage(e.to_string()))?
@@ -527,8 +574,16 @@ impl MemoryStoreImpl {
         conn: &rusqlite::Connection,
         id: &str,
     ) -> Result<Memory, MemoryError> {
+        // Increment access_count and set last_accessed_at on load
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE memories SET access_count = access_count + 1, last_accessed_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )
+        .map_err(|e| MemoryError::Storage(e.to_string()))?;
+
         conn.query_row(
-            "SELECT id, workspace_id, agent_id, memory_type, content, embedding, importance, source, source_task_id, access_policy, metadata, expires_at, created_at, updated_at
+            "SELECT id, workspace_id, agent_id, memory_type, content, embedding, importance, source, source_task_id, access_policy, metadata, expires_at, access_count, last_accessed_at, created_at, updated_at
              FROM memories WHERE id = ?1",
             params![id],
             |row| {
@@ -546,8 +601,10 @@ impl MemoryStoreImpl {
                     access_policy: AccessPolicy::from_str(&row.get::<_, String>(9)?).unwrap_or(AccessPolicy::Workspace),
                     metadata: row.get::<_, Option<String>>(10)?.and_then(|s| serde_json::from_str(&s).ok()),
                     expires_at: row.get(11)?,
-                    created_at: row.get(12)?,
-                    updated_at: row.get(13)?,
+                    access_count: row.get(12)?,
+                    last_accessed_at: row.get(13)?,
+                    created_at: row.get(14)?,
+                    updated_at: row.get(15)?,
                 })
             },
         )
@@ -682,6 +739,8 @@ fn rrf_merge(
                 access_policy: AccessPolicy::Workspace,
                 metadata: None,
                 expires_at: None,
+                access_count: 0,
+                last_accessed_at: None,
                 created_at: String::new(),
                 updated_at: String::new(),
             },
@@ -735,6 +794,8 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
 
 impl MemoryStoreImpl {
     /// Retrieve with full Memory objects loaded.
+    /// Applies time-decay penalty: memories not accessed for 30+ days get score
+    /// reduced by 20%, 60+ days by 40%. Results are re-sorted after decay.
     pub async fn retrieve_full(
         &self,
         query: MemoryQuery,
@@ -745,12 +806,33 @@ impl MemoryStoreImpl {
         let conn = self.conn()?;
         let mut loaded = Vec::new();
         let mut total_tokens: u32 = 0;
+        let now = chrono::Utc::now();
 
         for mut scored in result.memories.drain(..) {
             match self.load_memory_by_id(&conn, &scored.memory.id) {
                 Ok(mem) => {
                     let tok = (mem.content.len() / 4) as u32;
                     total_tokens += tok;
+
+                    // Apply time-decay penalty based on last_accessed_at
+                    if mem.memory_type != MemoryType::Pinned {
+                        let reference_time = mem
+                            .last_accessed_at
+                            .as_deref()
+                            .or(Some(mem.created_at.as_str()))
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                            .map(|dt| dt.with_timezone(&chrono::Utc));
+
+                        if let Some(ref_time) = reference_time {
+                            let days_since = (now - ref_time).num_days();
+                            if days_since >= 60 {
+                                scored.score *= 0.6;
+                            } else if days_since >= 30 {
+                                scored.score *= 0.8;
+                            }
+                        }
+                    }
+
                     scored.memory = mem;
                     loaded.push(scored);
                 }
@@ -759,6 +841,9 @@ impl MemoryStoreImpl {
                 }
             }
         }
+
+        // Re-sort after time-decay adjustments
+        loaded.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(RetrievalResult {
             memories: loaded,

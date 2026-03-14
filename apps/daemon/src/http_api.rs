@@ -59,7 +59,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Health
         .route("/api/health", get(health))
         // Agents
-        .route("/api/agents", get(list_agents))
+        .route("/api/agents", get(list_agents).post(create_agent))
+        .route("/api/agents/{id}", delete(delete_agent))
+        .route("/api/agents/{id}/cancel", post(cancel_agent_task))
         // Approvals
         .route("/api/approvals", get(list_approvals))
         .route("/api/approvals/{id}/approve", post(approve))
@@ -163,6 +165,104 @@ async fn list_agents(
         .collect();
 
     Ok(Json(AgentsResponse { agents: infos }))
+}
+
+#[derive(Deserialize)]
+struct CreateAgentRequest {
+    name: String,
+    description: Option<String>,
+    system_prompt: String,
+    model: Option<String>,
+    tools: Option<Vec<String>>,
+    permissions: Option<Vec<String>>,
+}
+
+async fn create_agent(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TokenQuery>,
+    Json(body): Json<CreateAgentRequest>,
+) -> Result<Json<ActionResult>, (StatusCode, Json<ErrorResponse>)> {
+    check_token(&q, &state.dashboard_token)?;
+
+    let id = format!("agt_{}", ulid::Ulid::new());
+
+    let mut model_config = nexmind_agent_engine::definition::ModelConfig::default();
+    if let Some(ref m) = body.model {
+        model_config.primary = m.clone();
+    }
+
+    let def = nexmind_agent_engine::definition::AgentDefinition {
+        id: id.clone(),
+        name: body.name,
+        version: 1,
+        description: body.description,
+        system_prompt: body.system_prompt,
+        model: model_config,
+        tools: body.tools.unwrap_or_default(),
+        memory_policy: nexmind_agent_engine::definition::MemoryPolicy::default(),
+        execution_policy: nexmind_agent_engine::definition::ExecutionPolicy::default(),
+        budget: nexmind_agent_engine::definition::BudgetPolicy::default(),
+        trust_level: nexmind_agent_engine::definition::TrustLevel::Standard,
+        permissions: body.permissions.unwrap_or_default(),
+        schedule: None,
+        tags: vec![],
+        workspace_id: "default".into(),
+    };
+
+    match state.agent_registry.create(&def) {
+        Ok(agent_id) => Ok(Json(ActionResult {
+            success: true,
+            message: agent_id,
+        })),
+        Err(e) => Ok(Json(ActionResult {
+            success: false,
+            message: e.to_string(),
+        })),
+    }
+}
+
+async fn delete_agent(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Result<Json<ActionResult>, (StatusCode, Json<ErrorResponse>)> {
+    check_token(&q, &state.dashboard_token)?;
+
+    match state.agent_registry.delete(&id) {
+        Ok(()) => Ok(Json(ActionResult {
+            success: true,
+            message: "Deleted".into(),
+        })),
+        Err(e) => Ok(Json(ActionResult {
+            success: false,
+            message: e.to_string(),
+        })),
+    }
+}
+
+async fn cancel_agent_task(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Result<Json<ActionResult>, (StatusCode, Json<ErrorResponse>)> {
+    check_token(&q, &state.dashboard_token)?;
+
+    // Verify the agent exists before attempting cancellation
+    let agents = state.agent_registry.list_all().unwrap_or_default();
+    let exists = agents.iter().any(|a| a.id == id);
+
+    if !exists {
+        return Ok(Json(ActionResult {
+            success: false,
+            message: format!("Agent {} not found", id),
+        }));
+    }
+
+    // Task cancellation is stubbed — full runtime integration required
+    Ok(Json(ActionResult {
+        success: true,
+        message: format!("Cancel requested for agent {}. (Task cancellation requires agent runtime integration.)", id),
+    }))
 }
 
 #[derive(Serialize)]

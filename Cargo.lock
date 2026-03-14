@@ -2286,6 +2286,7 @@ dependencies = [
  "nexmind-skill-registry",
  "nexmind-storage",
  "reqwest 0.12.28",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

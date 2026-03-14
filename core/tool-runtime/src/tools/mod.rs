@@ -8,6 +8,9 @@ pub mod memory_write;
 pub mod send_message;
 pub mod generate_tool;
 pub mod notify;
+pub mod code_exec;
+pub mod delegate;
+pub mod db_query;
 #[cfg(feature = "browser")]
 pub mod browser;
 #[cfg(feature = "email")]
@@ -25,6 +28,9 @@ pub use memory_write::MemoryWriteTool;
 pub use send_message::SendMessageTool;
 pub use generate_tool::GenerateToolTool;
 pub use notify::NotifyTool;
+pub use code_exec::CodeExecTool;
+pub use delegate::DelegateTool;
+pub use db_query::DbQueryTool;
 #[cfg(feature = "browser")]
 pub use browser::manager::{BrowserConfig, BrowserManager, SharedBrowserManager};
 #[cfg(feature = "browser")]
