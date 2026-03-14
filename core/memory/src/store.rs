@@ -483,6 +483,17 @@ impl MemoryStoreImpl {
         Ok(result)
     }
 
+    /// Delete all session messages for a given session.
+    pub fn clear_session(&self, session_id: &str) -> Result<(), MemoryError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "DELETE FROM session_messages WHERE session_id = ?1",
+            rusqlite::params![session_id],
+        )
+        .map_err(|e| MemoryError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
     // ── Internal ────────────────────────────────────────────────────
 
     fn bm25_search(

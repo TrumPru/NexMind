@@ -11,6 +11,7 @@ pub mod proto {
     tonic::include_proto!("nexmind");
 }
 
+pub mod commands;
 pub mod dashboard;
 pub mod http_api;
 pub mod router;
@@ -556,6 +557,7 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+    let start_time = Instant::now();
 
     info!("nexmind daemon starting");
     info!(data_dir = %args.data_dir, "data directory");
@@ -714,6 +716,9 @@ async fn main() -> Result<()> {
     );
 
     message_router.set_approval_manager(approval_manager.clone());
+    message_router.set_model_router(model_router.clone());
+    message_router.set_memory_store(memory_store.clone());
+    message_router.set_start_time(start_time);
 
     // If the default model doesn't support tool calling but OpenClaw is available,
     // use agt_openclaw as the default agent (it routes through OpenClaw which has full tool support)
@@ -777,7 +782,6 @@ async fn main() -> Result<()> {
 
     // ── Start HTTP Dashboard Server ──────────────────────────────────
     let dashboard_token = dashboard::DashboardServer::generate_token();
-    let start_time = Instant::now();
     info!("Dashboard: http://localhost:19385/?token={}", dashboard_token);
 
     let http_state = Arc::new(http_api::AppState {
@@ -792,7 +796,8 @@ async fn main() -> Result<()> {
         skill_registry: skill_registry.clone(),
         memory_store: memory_store.clone(),
         model_router: model_router.clone(),
-        session_id: session_id.clone(),
+        session_id: Arc::new(std::sync::Mutex::new(session_id.clone())),
+        current_agent_id: Arc::new(std::sync::Mutex::new("agt_default_chat".into())),
         workspace_path: workspace_path.clone(),
     });
 

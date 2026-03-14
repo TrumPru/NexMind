@@ -32,7 +32,8 @@ pub struct AppState {
     pub skill_registry: Arc<nexmind_skill_registry::SkillRegistry>,
     pub memory_store: Arc<nexmind_memory::MemoryStoreImpl>,
     pub model_router: Arc<nexmind_model_router::ModelRouter>,
-    pub session_id: String,
+    pub session_id: Arc<std::sync::Mutex<String>>,
+    pub current_agent_id: Arc<std::sync::Mutex<String>>,
     pub workspace_path: std::path::PathBuf,
 }
 
@@ -438,10 +439,28 @@ async fn chat(
 ) -> Result<Json<ChatResponse>, (StatusCode, Json<ErrorResponse>)> {
     check_token(&q, &state.dashboard_token)?;
 
-    // Resolve agent — use default chat agent
+    // Handle slash commands before reaching the agent
+    if body.message.trim_start().starts_with('/') {
+        let ctx = crate::commands::CommandContext {
+            model_router: state.model_router.clone(),
+            agent_registry: state.agent_registry.clone(),
+            memory_store: state.memory_store.clone(),
+            session_id: state.session_id.clone(),
+            current_agent_id: state.current_agent_id.clone(),
+            start_time: state.start_time,
+        };
+        if let crate::commands::CommandResult::Response(text) =
+            crate::commands::handle_command(&body.message, &ctx).await
+        {
+            return Ok(Json(ChatResponse { response: text }));
+        }
+    }
+
+    // Resolve agent — use current agent (switchable via /agent switch)
+    let agent_id = state.current_agent_id.lock().unwrap().clone();
     let agent = state
         .agent_registry
-        .get("agt_default_chat")
+        .get(&agent_id)
         .or_else(|_| {
             // Fallback: pick the first available agent
             state.agent_registry.list_all()
@@ -454,8 +473,9 @@ async fn chat(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
         })?;
 
+    let session_id = state.session_id.lock().unwrap().clone();
     let context = nexmind_agent_engine::RunContext::new("default")
-        .with_session(&state.session_id)
+        .with_session(&session_id)
         .with_workspace_path(state.workspace_path.clone());
 
     let result = state
@@ -481,9 +501,39 @@ async fn chat_stream(
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<SseEvent, Infallible>>>, (StatusCode, Json<ErrorResponse>)> {
     check_token(&q, &state.dashboard_token)?;
 
+    // Handle slash commands — return instant SSE response via channel
+    if body.message.trim_start().starts_with('/') {
+        let ctx = crate::commands::CommandContext {
+            model_router: state.model_router.clone(),
+            agent_registry: state.agent_registry.clone(),
+            memory_store: state.memory_store.clone(),
+            session_id: state.session_id.clone(),
+            current_agent_id: state.current_agent_id.clone(),
+            start_time: state.start_time,
+        };
+        if let crate::commands::CommandResult::Response(text) =
+            crate::commands::handle_command(&body.message, &ctx).await
+        {
+            let (tx, rx) = tokio::sync::mpsc::channel::<Result<SseEvent, Infallible>>(4);
+            tokio::spawn(async move {
+                let _ = tx.send(Ok(SseEvent::default()
+                    .event("text_delta")
+                    .data(serde_json::json!({"text": text}).to_string())
+                )).await;
+                let _ = tx.send(Ok(SseEvent::default()
+                    .event("done")
+                    .data(serde_json::json!({"status": "command"}).to_string())
+                )).await;
+            });
+            let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+            return Ok(Sse::new(stream).keep_alive(KeepAlive::default()));
+        }
+    }
+
+    let agent_id = state.current_agent_id.lock().unwrap().clone();
     let agent = state
         .agent_registry
-        .get("agt_default_chat")
+        .get(&agent_id)
         .or_else(|_| {
             state.agent_registry.list_all()
                 .and_then(|agents| agents.into_iter().next().ok_or_else(|| {
@@ -494,8 +544,9 @@ async fn chat_stream(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
         })?;
 
+    let session_id = state.session_id.lock().unwrap().clone();
     let context = nexmind_agent_engine::RunContext::new("default")
-        .with_session(&state.session_id)
+        .with_session(&session_id)
         .with_workspace_path(state.workspace_path.clone());
 
     let runtime = state.agent_runtime.clone();

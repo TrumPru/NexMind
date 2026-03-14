@@ -34,6 +34,12 @@ pub struct MessageRouter {
     approval_manager: Option<Arc<nexmind_agent_engine::approval::ApprovalManager>>,
     /// Voice processor for STT transcription
     voice_processor: Option<Arc<VoiceProcessor>>,
+    /// Model router for /model commands
+    model_router: Option<Arc<nexmind_model_router::ModelRouter>>,
+    /// Memory store for /memory and /clear commands
+    memory_store: Option<Arc<nexmind_memory::MemoryStoreImpl>>,
+    /// Daemon start time for /status
+    start_time: Option<std::time::Instant>,
 }
 
 impl MessageRouter {
@@ -57,6 +63,9 @@ impl MessageRouter {
             default_chat_id: Arc::new(tokio::sync::RwLock::new(None)),
             approval_manager: None,
             voice_processor: None,
+            model_router: None,
+            memory_store: None,
+            start_time: None,
         }
     }
 
@@ -73,6 +82,21 @@ impl MessageRouter {
     /// Set the default agent ID for message routing.
     pub fn set_default_agent(&mut self, agent_id: &str) {
         self.default_agent_id = agent_id.to_string();
+    }
+
+    /// Set model router for slash commands.
+    pub fn set_model_router(&mut self, router: Arc<nexmind_model_router::ModelRouter>) {
+        self.model_router = Some(router);
+    }
+
+    /// Set memory store for slash commands.
+    pub fn set_memory_store(&mut self, store: Arc<nexmind_memory::MemoryStoreImpl>) {
+        self.memory_store = Some(store);
+    }
+
+    /// Set start time for /status command.
+    pub fn set_start_time(&mut self, t: std::time::Instant) {
+        self.start_time = Some(t);
     }
 
     /// Register a connector.
@@ -313,31 +337,48 @@ impl MessageRouter {
         }
     }
 
-    /// Handle bot commands.
+    /// Handle bot commands via shared command handler.
     async fn handle_command(
         &self,
         command: &str,
         args: &str,
         msg: &InboundMessage,
     ) -> Option<String> {
-        match command {
-            "/start" => Some("Welcome to NexMind! Send me any message and I'll help.".into()),
-            "/help" => Some(
-                "Commands:\n/start - Start the bot\n/help - Show this help\n/status - System status"
-                    .into(),
-            ),
-            "/status" => Some("NexMind is running. All systems healthy.".into()),
-            "/memory" => Some("Memory summary: use 'recall' in a message to search memories.".into()),
-            _ => {
-                // Unknown command → treat as regular message
-                let full_text = if args.is_empty() {
-                    command.to_string()
-                } else {
-                    format!("{} {}", command, args)
-                };
-                self.run_agent_for_text(&full_text, &msg.chat_id).await
+        // Telegram-specific: /start is a welcome greeting
+        if command == "/start" {
+            return Some("Welcome to NexMind! Send me any message and I'll help.\nUse /help to see available commands.".into());
+        }
+
+        // Build full command string and try the shared handler
+        let full_text = if args.is_empty() {
+            command.to_string()
+        } else {
+            format!("{} {}", command, args)
+        };
+
+        // Use shared command handler if model_router and memory_store are available
+        if let (Some(model_router), Some(memory_store)) =
+            (&self.model_router, &self.memory_store)
+        {
+            let ctx = crate::commands::CommandContext {
+                model_router: model_router.clone(),
+                agent_registry: self.agent_registry.clone(),
+                memory_store: memory_store.clone(),
+                session_id: Arc::new(std::sync::Mutex::new(self.session_id.clone())),
+                current_agent_id: Arc::new(std::sync::Mutex::new(
+                    self.default_agent_id.clone(),
+                )),
+                start_time: self.start_time.unwrap_or_else(std::time::Instant::now),
+            };
+            if let crate::commands::CommandResult::Response(text) =
+                crate::commands::handle_command(&full_text, &ctx).await
+            {
+                return Some(text);
             }
         }
+
+        // Unknown command → treat as regular message
+        self.run_agent_for_text(&full_text, &msg.chat_id).await
     }
 
     /// Handle an incoming voice message: download audio, transcribe, then run the agent.
