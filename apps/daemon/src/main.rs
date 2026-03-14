@@ -453,6 +453,8 @@ fn init_tool_registry(
         let browser_config = BrowserConfig {
             headless: true,
             screenshot_dir: workspace_path.join("screenshots"),
+            allowed_domains: None,    // No whitelist — all domains allowed
+            blocked_domains: vec![],  // No blocklist — full access
             ..Default::default()
         };
         let browser_manager: SharedBrowserManager =
