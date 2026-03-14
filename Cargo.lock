@@ -2076,6 +2076,7 @@ dependencies = [
  "nexmind-event-bus",
  "nexmind-memory",
  "nexmind-model-router",
+ "nexmind-openclaw",
  "nexmind-scheduler",
  "nexmind-security",
  "nexmind-skill-registry",
