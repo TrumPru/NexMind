@@ -16,6 +16,7 @@ nexmind-telegram = { workspace = true, features = ["live"] }
 nexmind-scheduler = { workspace = true }
 nexmind-skill-registry = { workspace = true }
 nexmind-openclaw = { workspace = true }
+nexmind-config = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }

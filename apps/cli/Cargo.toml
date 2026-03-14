@@ -13,6 +13,7 @@ nexmind-skill-registry = { workspace = true }
 serde_yaml = { workspace = true }
 nexmind-agent-engine = { workspace = true }
 nexmind-model-router = { workspace = true }
+nexmind-config = { workspace = true }
 nexmind-tool-runtime = { workspace = true }
 nexmind-storage = { workspace = true }
 nexmind-event-bus = { workspace = true }

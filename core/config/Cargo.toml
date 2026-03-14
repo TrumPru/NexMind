@@ -1,0 +1,11 @@
+[package]
+name = "nexmind-config"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+toml = "0.8"
+dotenvy = "0.15"
+dirs = "5"
+tracing = { workspace = true }

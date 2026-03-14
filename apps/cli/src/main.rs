@@ -15,14 +15,21 @@ use proto::*;
 #[command(name = "nexmind", about = "NexMind CLI — manage your AI agents")]
 struct Cli {
     /// Daemon address
-    #[arg(long, default_value = "http://127.0.0.1:19384", global = true)]
-    daemon_addr: String,
+    #[arg(long, global = true)]
+    daemon_addr: Option<String>,
 
     /// Data directory (for direct DB access in schedule commands)
-    #[arg(long, default_value = "./data", global = true)]
-    data_dir: String,
+    #[arg(long, global = true)]
+    data_dir: Option<String>,
 
     #[command(subcommand)]
+    command: Commands,
+}
+
+/// Resolved CLI settings with config fallbacks applied.
+struct ResolvedCli {
+    daemon_addr: String,
+    data_dir: String,
     command: Commands,
 }
 
@@ -410,7 +417,25 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let cli = Cli::parse();
+    // Load config from ~/.nexmind/ (also injects .env secrets into process env)
+    let config = nexmind_config::NexMindConfig::load();
+
+    let parsed = Cli::parse();
+
+    // Resolve: CLI args > config.toml > hardcoded defaults
+    let cli = ResolvedCli {
+        daemon_addr: parsed
+            .daemon_addr
+            .unwrap_or_else(|| config.daemon.http_addr()),
+        data_dir: parsed.data_dir.unwrap_or_else(|| {
+            config
+                .paths
+                .data_dir_resolved()
+                .to_string_lossy()
+                .into_owned()
+        }),
+        command: parsed.command,
+    };
 
     match cli.command {
         Commands::Health => health(&cli.daemon_addr).await?,
