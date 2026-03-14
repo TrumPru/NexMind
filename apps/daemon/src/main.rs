@@ -466,6 +466,18 @@ fn init_tool_registry(
         registry.register(Box::new(BrowserTypeTool::new(browser_manager)));
     }
 
+    // OpenClaw external agent tools (if gateway is configured via env vars)
+    if let Ok(openclaw_config) = nexmind_openclaw::OpenClawConfig::from_env() {
+        // Only register if explicitly configured (OPENCLAW_GATEWAY_URL is set)
+        if std::env::var("OPENCLAW_GATEWAY_URL").is_ok() {
+            let openclaw_agent = Arc::new(nexmind_openclaw::OpenClawAgent::new(openclaw_config));
+            registry.register(Box::new(nexmind_openclaw::OpenClawSendTool::new(openclaw_agent.clone())));
+            registry.register(Box::new(nexmind_openclaw::OpenClawDelegateTool::new(openclaw_agent.clone())));
+            registry.register(Box::new(nexmind_openclaw::OpenClawStatusTool::new(openclaw_agent)));
+            info!("OpenClaw external agent tools registered");
+        }
+    }
+
     info!("tool registry initialized with {} tools", registry.list_all_tools().len());
     registry
 }
@@ -553,6 +565,15 @@ async fn main() -> Result<()> {
     match agent_registry.create(&default_agent) {
         Ok(_) => info!("default agent created"),
         Err(e) => info!("default agent: {}", e),
+    }
+
+    // Register OpenClaw external agent if configured
+    if std::env::var("OPENCLAW_GATEWAY_URL").is_ok() {
+        let openclaw_agent_def = nexmind_openclaw::OpenClawAgent::as_agent_definition("default");
+        match agent_registry.create(&openclaw_agent_def) {
+            Ok(_) => info!("OpenClaw external agent registered (agt_openclaw)"),
+            Err(e) => info!("OpenClaw agent: {}", e),
+        }
     }
 
     // Initialize approval manager and cost tracker

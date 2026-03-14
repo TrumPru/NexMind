@@ -13,6 +13,7 @@ members = [
     "core/scheduler",
     "core/skill-registry",
     "connectors/telegram",
+    "connectors/openclaw",
     "apps/daemon",
     "apps/cli",
 ]
@@ -54,6 +55,7 @@ nexmind-scheduler = { path = "core/scheduler" }
 nexmind-skill-registry = { path = "core/skill-registry" }
 serde_yaml = "0.9"
 nexmind-telegram = { path = "connectors/telegram" }
+nexmind-openclaw = { path = "connectors/openclaw" }
 reqwest = { version = "0.12", features = ["json", "multipart"], default-features = false }
 lettre = { version = "0.11", features = ["tokio1-native-tls", "smtp-transport", "builder"] }
 imap = "2"
