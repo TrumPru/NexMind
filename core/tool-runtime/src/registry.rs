@@ -19,6 +19,7 @@ pub struct ToolContext {
     pub workspace_path: PathBuf,
     pub granted_permissions: Vec<String>,
     pub correlation_id: String,
+    pub team_id: Option<String>,
 }
 
 /// Result of tool execution.
@@ -472,6 +473,7 @@ mod tests {
                 "network:outbound".into(),
             ],
             correlation_id: "corr_test".into(),
+            team_id: None,
         }
     }
 
@@ -509,6 +511,7 @@ mod tests {
             workspace_path: tmp.path().to_path_buf(),
             granted_permissions: vec![], // No permissions!
             correlation_id: "corr_test".into(),
+            team_id: None,
         };
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -636,6 +639,7 @@ mod tests {
             workspace_path: tmp.path().to_path_buf(),
             granted_permissions: vec!["shell:exec".into()],
             correlation_id: "corr_test".into(),
+            team_id: None,
         };
 
         let result = registry

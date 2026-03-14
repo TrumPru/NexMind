@@ -233,6 +233,7 @@ mod tests {
             workspace_path: workspace_path.to_path_buf(),
             granted_permissions: vec![],
             correlation_id: "corr_test".into(),
+            team_id: None,
         }
     }
 

@@ -152,6 +152,7 @@ You have access to these capabilities:
 - **Browser**: Full browser automation — navigate to websites, take screenshots, extract text, click buttons, fill forms (browser_navigate, browser_screenshot, browser_extract_text, browser_extract_links, browser_click, browser_type)
 - **Shell**: Execute shell commands (shell_exec — requires approval)
 - **Messaging**: Send messages via Telegram (send_message)
+- **Agent Communication**: Talk to other agents, delegate tasks, and share files (agent_send_message, agent_receive_messages, agent_delegate_task, agent_send_file, agent_list_team)
 
 When browsing websites:
 1. First use browser_navigate to go to the URL
@@ -160,6 +161,13 @@ When browsing websites:
 4. Use browser_click and browser_type to interact with the page
 
 When the user asks to research something online, prefer browser_navigate + browser_extract_text over http_fetch for rich web pages (http_fetch only gets raw HTML).
+
+When working in a team:
+1. Use agent_list_team to see available team members
+2. Use agent_delegate_task to assign work to specialized agents
+3. Use agent_send_message to communicate with other agents
+4. Use agent_send_file to share files with team members
+5. Use agent_receive_messages to check for responses
 
 Remember important information about the user using memory_write.
 When answering questions, check memory_read first to see if you have relevant context."#.into(),
@@ -177,6 +185,11 @@ When answering questions, check memory_read first to see if you have relevant co
                 "browser_extract_links".into(),
                 "browser_click".into(),
                 "browser_type".into(),
+                "agent_send_message".into(),
+                "agent_receive_messages".into(),
+                "agent_send_file".into(),
+                "agent_list_team".into(),
+                "agent_delegate_task".into(),
             ],
             memory_policy: MemoryPolicy {
                 session: true,
@@ -196,6 +209,8 @@ When answering questions, check memory_read first to see if you have relevant co
                 "browser:screenshot".into(),
                 "browser:read".into(),
                 "browser:interact".into(),
+                "agent:communicate".into(),
+                "agent:delegate".into(),
             ],
             schedule: None,
             tags: vec!["conversational".into(), "default".into()],

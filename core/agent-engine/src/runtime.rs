@@ -27,6 +27,8 @@ pub struct RunContext {
     pub correlation_id: String,
     pub session_id: String,
     pub workspace_path: PathBuf,
+    pub team_id: Option<String>,
+    pub team_role: Option<String>,
 }
 
 impl RunContext {
@@ -38,6 +40,8 @@ impl RunContext {
             correlation_id: run_id.clone(),
             session_id: run_id,
             workspace_path: PathBuf::from("./data/workspace"),
+            team_id: None,
+            team_role: None,
         }
     }
 
@@ -48,6 +52,12 @@ impl RunContext {
 
     pub fn with_workspace_path(mut self, path: PathBuf) -> Self {
         self.workspace_path = path;
+        self
+    }
+
+    pub fn with_team(mut self, team_id: &str, role: &str) -> Self {
+        self.team_id = Some(team_id.to_string());
+        self.team_role = Some(role.to_string());
         self
     }
 }
@@ -72,6 +82,7 @@ pub struct AgentRuntime {
     tool_registry: Option<Arc<ToolRegistry>>,
     approval_manager: Option<Arc<crate::approval::ApprovalManager>>,
     cost_tracker: Option<Arc<crate::cost::CostTracker>>,
+    agent_registry: Option<Arc<crate::registry::AgentRegistry>>,
 }
 
 impl AgentRuntime {
@@ -88,7 +99,13 @@ impl AgentRuntime {
             tool_registry: None,
             approval_manager: None,
             cost_tracker: None,
+            agent_registry: None,
         }
+    }
+
+    pub fn with_registry(mut self, agent_registry: Arc<crate::registry::AgentRegistry>) -> Self {
+        self.agent_registry = Some(agent_registry);
+        self
     }
 
     pub fn with_memory(mut self, memory_store: Arc<MemoryStoreImpl>) -> Self {
@@ -565,6 +582,7 @@ impl AgentRuntime {
             workspace_path: context.workspace_path.clone(),
             granted_permissions: agent.permissions.clone(),
             correlation_id: context.correlation_id.clone(),
+            team_id: context.team_id.clone(),
         };
 
         match tool_registry
@@ -775,5 +793,32 @@ impl AgentRuntime {
         )
         .map_err(|e| AgentError::StorageError(e.to_string()))?;
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl nexmind_agent_comm::AgentExecutor for AgentRuntime {
+    async fn execute_agent(
+        &self,
+        agent_id: &str,
+        input: &str,
+        workspace_id: &str,
+        team_id: Option<&str>,
+    ) -> Result<String, String> {
+        let registry = self
+            .agent_registry
+            .as_ref()
+            .ok_or_else(|| "agent registry not configured".to_string())?;
+
+        let agent = registry.get(agent_id).map_err(|e| e.to_string())?;
+
+        let mut context = RunContext::new(workspace_id);
+        if let Some(tid) = team_id {
+            context.team_id = Some(tid.to_string());
+        }
+
+        let result = self.run(&agent, input, context).await.map_err(|e| e.to_string())?;
+
+        result.response.ok_or_else(|| "agent returned no response".to_string())
     }
 }

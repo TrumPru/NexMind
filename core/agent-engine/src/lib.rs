@@ -8,6 +8,12 @@ pub mod team;
 pub mod templates;
 pub mod notification;
 
+// Re-export agent communication types from nexmind-agent-comm
+pub use nexmind_agent_comm::{
+    AgentExecutor, AgentMessage, AgentMessageType, CommError, FileRef,
+    MailboxRouter, TeamMemberInfo, AgentMailbox,
+};
+
 pub use notification::{
     Notification, NotificationAction, NotificationConfig, NotificationEngine,
     NotificationPriority, QuietHours,

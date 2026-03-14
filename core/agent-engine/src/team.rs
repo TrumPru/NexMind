@@ -16,6 +16,9 @@ use crate::AgentError;
 pub enum OrchestrationPattern {
     Sequential,
     FanOutFanIn,
+    /// Agents run collaboratively: a supervisor delegates tasks and agents
+    /// communicate via mailbox. Supports multi-round conversations.
+    Collaborative,
 }
 
 impl Default for OrchestrationPattern {
@@ -79,6 +82,12 @@ pub struct TeamDefinition {
     pub failure_policy: TeamFailurePolicy,
     pub budget: BudgetPolicy,
     pub created_at: String,
+    /// Supervisor agent for Collaborative pattern (delegates tasks to members).
+    #[serde(default)]
+    pub supervisor_agent_id: Option<String>,
+    /// Maximum communication rounds for Collaborative pattern.
+    #[serde(default)]
+    pub max_rounds: Option<u32>,
 }
 
 impl Default for TeamDefinition {
@@ -96,6 +105,8 @@ impl Default for TeamDefinition {
             failure_policy: TeamFailurePolicy::default(),
             budget: BudgetPolicy::default(),
             created_at: chrono::Utc::now().to_rfc3339(),
+            supervisor_agent_id: None,
+            max_rounds: None,
         }
     }
 }
@@ -211,6 +222,7 @@ pub struct TeamOrchestrator {
     agent_registry: Arc<crate::registry::AgentRegistry>,
     team_registry: Arc<TeamRegistry>,
     event_bus: Arc<EventBus>,
+    mailbox_router: Option<Arc<nexmind_agent_comm::MailboxRouter>>,
 }
 
 impl TeamOrchestrator {
@@ -225,7 +237,13 @@ impl TeamOrchestrator {
             agent_registry,
             team_registry,
             event_bus,
+            mailbox_router: None,
         }
+    }
+
+    pub fn with_mailbox_router(mut self, mailbox_router: Arc<nexmind_agent_comm::MailboxRouter>) -> Self {
+        self.mailbox_router = Some(mailbox_router);
+        self
     }
 
     /// Run a team to completion.
@@ -258,6 +276,9 @@ impl TeamOrchestrator {
             }
             OrchestrationPattern::FanOutFanIn => {
                 self.run_fan_out_fan_in(&team, input, workspace_id).await
+            }
+            OrchestrationPattern::Collaborative => {
+                self.run_collaborative(&team, input, workspace_id).await
             }
         };
 
@@ -531,6 +552,150 @@ impl TeamOrchestrator {
             duration_ms: 0,
         })
     }
+
+    /// Collaborative: supervisor agent coordinates team members via mailbox communication.
+    /// Members can send messages, share files, and delegate tasks to each other.
+    async fn run_collaborative(
+        &self,
+        team: &TeamDefinition,
+        input: &str,
+        workspace_id: &str,
+    ) -> Result<TeamRunResult, AgentError> {
+        let mailbox_router = self.mailbox_router.as_ref().ok_or_else(|| {
+            AgentError::ExecutionError("mailbox router not configured for collaborative mode".into())
+        })?;
+
+        // Determine supervisor
+        let supervisor_id = team
+            .supervisor_agent_id
+            .as_deref()
+            .unwrap_or(&team.orchestrator_agent_id);
+
+        // Register all team members in mailbox router
+        let mut member_infos = Vec::new();
+        for member in &team.members {
+            let _mailbox = mailbox_router.register_agent(&member.agent_id).await;
+            let agent = self.agent_registry.get(&member.agent_id).ok();
+            member_infos.push(nexmind_agent_comm::TeamMemberInfo {
+                agent_id: member.agent_id.clone(),
+                name: agent
+                    .as_ref()
+                    .map(|a| a.name.clone())
+                    .unwrap_or_else(|| member.agent_id.clone()),
+                role: member.role.clone(),
+                description: agent.and_then(|a| a.description.clone()),
+            });
+        }
+
+        mailbox_router
+            .register_team(&team.id, member_infos.clone())
+            .await;
+
+        // Create shared workspace directory
+        let shared_dir = std::path::PathBuf::from("./data/workspace/shared").join(&team.id);
+        let _ = std::fs::create_dir_all(&shared_dir);
+
+        // Build supervisor's enhanced system prompt
+        let mut team_roster = String::from("You are the supervisor of a team. Your team members:\n");
+        for info in &member_infos {
+            team_roster.push_str(&format!(
+                "- **{}** (ID: `{}`): role={}, {}\n",
+                info.name,
+                info.agent_id,
+                info.role,
+                info.description.as_deref().unwrap_or("no description"),
+            ));
+        }
+        team_roster.push_str("\nUse these tools to coordinate:\n");
+        team_roster.push_str("- `agent_delegate_task` — assign a task to a team member and get their response\n");
+        team_roster.push_str("- `agent_send_message` — send a message to a team member\n");
+        team_roster.push_str("- `agent_receive_messages` — check for messages from team members\n");
+        team_roster.push_str("- `agent_send_file` — share a file with a team member\n");
+        team_roster.push_str("- `agent_list_team` — list all team members\n");
+        team_roster.push_str("\nBreak down the task, delegate to appropriate members, synthesize their outputs, and provide the final result.");
+
+        // Get supervisor agent definition and augment it
+        let mut supervisor = self
+            .agent_registry
+            .get(supervisor_id)
+            .map_err(|e| AgentError::ExecutionError(format!("supervisor not found: {}", e)))?;
+
+        supervisor.system_prompt = format!("{}\n\n{}", supervisor.system_prompt, team_roster);
+
+        // Ensure supervisor has communication tools and permissions
+        let comm_tools = [
+            "agent_send_message",
+            "agent_receive_messages",
+            "agent_send_file",
+            "agent_list_team",
+            "agent_delegate_task",
+        ];
+        for tool in &comm_tools {
+            if !supervisor.tools.contains(&tool.to_string()) {
+                supervisor.tools.push(tool.to_string());
+            }
+        }
+        let comm_perms = ["agent:communicate", "agent:delegate"];
+        for perm in &comm_perms {
+            if !supervisor.permissions.contains(&perm.to_string()) {
+                supervisor.permissions.push(perm.to_string());
+            }
+        }
+
+        // Increase max iterations for collaborative mode
+        let max_rounds = team.max_rounds.unwrap_or(20);
+        supervisor.execution_policy.max_iterations = max_rounds;
+
+        // Run supervisor agent
+        let context = crate::runtime::RunContext::new(workspace_id)
+            .with_team(&team.id, "supervisor");
+
+        self.event_bus.emit(Event::new(
+            EventSource::Agent,
+            EventType::Custom("CollaborativeRunStarted".into()),
+            serde_json::json!({
+                "team_id": team.id,
+                "supervisor_id": supervisor_id,
+                "members": member_infos.len(),
+            }),
+            workspace_id,
+            None,
+        ));
+
+        let result = self.agent_runtime.run(&supervisor, input, context).await;
+
+        // Cleanup: unregister all agents and team
+        for member in &team.members {
+            mailbox_router.unregister_agent(&member.agent_id).await;
+        }
+        mailbox_router.unregister_team(&team.id).await;
+
+        match result {
+            Ok(run_result) => {
+                let mut outputs = HashMap::new();
+                if let Some(response) = &run_result.response {
+                    outputs.insert(
+                        "result".to_string(),
+                        serde_json::Value::String(response.clone()),
+                    );
+                }
+
+                Ok(TeamRunResult {
+                    outputs,
+                    total_input_tokens: run_result.tokens_used.input_tokens as u64,
+                    total_output_tokens: run_result.tokens_used.output_tokens as u64,
+                    total_cost_usd: 0.0,
+                    members_completed: team.members.len() as u32,
+                    members_failed: 0,
+                    duration_ms: run_result.duration_ms,
+                })
+            }
+            Err(e) => Err(AgentError::ExecutionError(format!(
+                "collaborative run failed: {}",
+                e
+            ))),
+        }
+    }
 }
 
 /// Resolve {{variable}} references in input mappings.
@@ -638,6 +803,8 @@ pub fn simple_research_team(workspace_id: &str) -> TeamDefinition {
         workspace_id: workspace_id.into(),
         pattern: OrchestrationPattern::Sequential,
         orchestrator_agent_id: "agt_researcher".into(),
+        supervisor_agent_id: None,
+        max_rounds: None,
         members: vec![
             TeamMember {
                 agent_id: "agt_researcher".into(),
@@ -709,6 +876,289 @@ pub fn writer_agent(workspace_id: &str) -> crate::definition::AgentDefinition {
         permissions: vec!["memory:read:workspace".into()],
         schedule: None,
         tags: vec!["writer".into(), "team".into()],
+        workspace_id: workspace_id.into(),
+    }
+}
+
+// ── Collaborative team presets ──────────────────────────────────
+
+/// Common tools and permissions for collaborative agents.
+fn collaborative_tools() -> Vec<String> {
+    vec![
+        "agent_send_message".into(),
+        "agent_receive_messages".into(),
+        "agent_send_file".into(),
+        "agent_list_team".into(),
+        "memory_read".into(),
+        "memory_write".into(),
+        "fs_read".into(),
+        "fs_write".into(),
+    ]
+}
+
+fn collaborative_permissions() -> Vec<String> {
+    vec![
+        "agent:communicate".into(),
+        "memory:read:workspace".into(),
+        "memory:write:workspace".into(),
+        "fs:read".into(),
+        "fs:write".into(),
+    ]
+}
+
+/// Create a coding team: planner + coder + reviewer.
+pub fn coding_team(workspace_id: &str) -> TeamDefinition {
+    TeamDefinition {
+        id: "team_coding".into(),
+        name: "Coding Team".into(),
+        version: 1,
+        description: Some("A 3-agent collaborative team: planner designs the approach, coder implements, reviewer validates.".into()),
+        workspace_id: workspace_id.into(),
+        pattern: OrchestrationPattern::Collaborative,
+        orchestrator_agent_id: "agt_planner".into(),
+        supervisor_agent_id: Some("agt_planner".into()),
+        max_rounds: Some(15),
+        members: vec![
+            TeamMember {
+                agent_id: "agt_planner".into(),
+                role: "planner".into(),
+                input_mapping: None,
+                output_key: "plan".into(),
+                depends_on: vec![],
+            },
+            TeamMember {
+                agent_id: "agt_coder".into(),
+                role: "coder".into(),
+                input_mapping: None,
+                output_key: "code".into(),
+                depends_on: vec![],
+            },
+            TeamMember {
+                agent_id: "agt_reviewer".into(),
+                role: "reviewer".into(),
+                input_mapping: None,
+                output_key: "review".into(),
+                depends_on: vec![],
+            },
+        ],
+        shared_context: SharedContextConfig::default(),
+        failure_policy: TeamFailurePolicy::SuspendTeam,
+        budget: BudgetPolicy {
+            max_tokens_per_run: 200_000,
+            max_cost_per_run_usd: 10.00,
+            max_cost_per_day_usd: 50.00,
+        },
+        created_at: chrono::Utc::now().to_rfc3339(),
+    }
+}
+
+/// Create the planner agent definition.
+pub fn planner_agent(workspace_id: &str) -> crate::definition::AgentDefinition {
+    let mut tools = collaborative_tools();
+    tools.push("agent_delegate_task".into());
+    tools.push("http_fetch".into());
+    let mut perms = collaborative_permissions();
+    perms.push("agent:delegate".into());
+    perms.push("network:outbound".into());
+
+    crate::definition::AgentDefinition {
+        id: "agt_planner".into(),
+        name: "Planner Agent".into(),
+        version: 1,
+        description: Some("Plans coding tasks, designs architecture, and coordinates team members.".into()),
+        system_prompt: "You are a planning agent and team supervisor. Break down coding tasks into clear steps. Delegate implementation to the coder agent and review to the reviewer agent. Synthesize results into a final deliverable.".into(),
+        model: crate::definition::ModelConfig::default(),
+        tools,
+        memory_policy: crate::definition::MemoryPolicy::default(),
+        execution_policy: crate::definition::ExecutionPolicy {
+            max_iterations: 20,
+            ..crate::definition::ExecutionPolicy::default()
+        },
+        budget: BudgetPolicy {
+            max_tokens_per_run: 100_000,
+            max_cost_per_run_usd: 5.0,
+            max_cost_per_day_usd: 25.0,
+        },
+        trust_level: crate::definition::TrustLevel::Standard,
+        permissions: perms,
+        schedule: None,
+        tags: vec!["planner".into(), "team".into(), "collaborative".into()],
+        workspace_id: workspace_id.into(),
+    }
+}
+
+/// Create the coder agent definition.
+pub fn coder_agent(workspace_id: &str) -> crate::definition::AgentDefinition {
+    let mut tools = collaborative_tools();
+    tools.push("http_fetch".into());
+
+    let mut perms = collaborative_permissions();
+    perms.push("network:outbound".into());
+
+    crate::definition::AgentDefinition {
+        id: "agt_coder".into(),
+        name: "Coder Agent".into(),
+        version: 1,
+        description: Some("Implements code based on plans. Writes clean, tested code.".into()),
+        system_prompt: "You are a coding agent. Implement code based on the task or plan provided. Write clean, well-structured code. Save files to the workspace using fs_write. Communicate progress and results to other agents using agent_send_message.".into(),
+        model: crate::definition::ModelConfig::default(),
+        tools,
+        memory_policy: crate::definition::MemoryPolicy::default(),
+        execution_policy: crate::definition::ExecutionPolicy::default(),
+        budget: BudgetPolicy::default(),
+        trust_level: crate::definition::TrustLevel::Standard,
+        permissions: perms,
+        schedule: None,
+        tags: vec!["coder".into(), "team".into(), "collaborative".into()],
+        workspace_id: workspace_id.into(),
+    }
+}
+
+/// Create the reviewer agent definition.
+pub fn reviewer_agent(workspace_id: &str) -> crate::definition::AgentDefinition {
+    crate::definition::AgentDefinition {
+        id: "agt_reviewer".into(),
+        name: "Reviewer Agent".into(),
+        version: 1,
+        description: Some("Reviews code for quality, bugs, and best practices.".into()),
+        system_prompt: "You are a code review agent. Review code for correctness, quality, bugs, security issues, and best practices. Provide constructive feedback. Read files with fs_read and communicate findings via agent_send_message.".into(),
+        model: crate::definition::ModelConfig::default(),
+        tools: collaborative_tools(),
+        memory_policy: crate::definition::MemoryPolicy::default(),
+        execution_policy: crate::definition::ExecutionPolicy::default(),
+        budget: BudgetPolicy::default(),
+        trust_level: crate::definition::TrustLevel::Standard,
+        permissions: collaborative_permissions(),
+        schedule: None,
+        tags: vec!["reviewer".into(), "team".into(), "collaborative".into()],
+        workspace_id: workspace_id.into(),
+    }
+}
+
+/// Create an analysis team: researcher + analyst + reporter.
+pub fn analysis_team(workspace_id: &str) -> TeamDefinition {
+    TeamDefinition {
+        id: "team_analysis".into(),
+        name: "Analysis Team".into(),
+        version: 1,
+        description: Some("A 3-agent collaborative team: researcher gathers data, analyst processes it, reporter writes findings.".into()),
+        workspace_id: workspace_id.into(),
+        pattern: OrchestrationPattern::Collaborative,
+        orchestrator_agent_id: "agt_analyst".into(),
+        supervisor_agent_id: Some("agt_analyst".into()),
+        max_rounds: Some(15),
+        members: vec![
+            TeamMember {
+                agent_id: "agt_data_researcher".into(),
+                role: "researcher".into(),
+                input_mapping: None,
+                output_key: "research_data".into(),
+                depends_on: vec![],
+            },
+            TeamMember {
+                agent_id: "agt_analyst".into(),
+                role: "analyst".into(),
+                input_mapping: None,
+                output_key: "analysis".into(),
+                depends_on: vec![],
+            },
+            TeamMember {
+                agent_id: "agt_reporter".into(),
+                role: "reporter".into(),
+                input_mapping: None,
+                output_key: "report".into(),
+                depends_on: vec![],
+            },
+        ],
+        shared_context: SharedContextConfig::default(),
+        failure_policy: TeamFailurePolicy::SuspendTeam,
+        budget: BudgetPolicy {
+            max_tokens_per_run: 200_000,
+            max_cost_per_run_usd: 10.00,
+            max_cost_per_day_usd: 50.00,
+        },
+        created_at: chrono::Utc::now().to_rfc3339(),
+    }
+}
+
+/// Create the data researcher agent definition.
+pub fn data_researcher_agent(workspace_id: &str) -> crate::definition::AgentDefinition {
+    let mut tools = collaborative_tools();
+    tools.push("http_fetch".into());
+
+    let mut perms = collaborative_permissions();
+    perms.push("network:outbound".into());
+
+    crate::definition::AgentDefinition {
+        id: "agt_data_researcher".into(),
+        name: "Data Researcher".into(),
+        version: 1,
+        description: Some("Researches topics, gathers data from web and files.".into()),
+        system_prompt: "You are a data research agent. Gather information from web sources using http_fetch and from local files using fs_read. Save collected data to workspace files. Share findings with other agents via agent_send_message and agent_send_file.".into(),
+        model: crate::definition::ModelConfig::default(),
+        tools,
+        memory_policy: crate::definition::MemoryPolicy::default(),
+        execution_policy: crate::definition::ExecutionPolicy::default(),
+        budget: BudgetPolicy::default(),
+        trust_level: crate::definition::TrustLevel::Standard,
+        permissions: perms,
+        schedule: None,
+        tags: vec!["researcher".into(), "team".into(), "collaborative".into()],
+        workspace_id: workspace_id.into(),
+    }
+}
+
+/// Create the analyst agent definition.
+pub fn analyst_agent(workspace_id: &str) -> crate::definition::AgentDefinition {
+    let mut tools = collaborative_tools();
+    tools.push("agent_delegate_task".into());
+
+    let mut perms = collaborative_permissions();
+    perms.push("agent:delegate".into());
+
+    crate::definition::AgentDefinition {
+        id: "agt_analyst".into(),
+        name: "Analyst Agent".into(),
+        version: 1,
+        description: Some("Analyzes data, identifies patterns and insights.".into()),
+        system_prompt: "You are an analyst agent and team supervisor. Coordinate the research and reporting. Delegate data gathering to the researcher and report writing to the reporter. Analyze data for patterns, trends, and insights. Provide the final synthesized analysis.".into(),
+        model: crate::definition::ModelConfig::default(),
+        tools,
+        memory_policy: crate::definition::MemoryPolicy::default(),
+        execution_policy: crate::definition::ExecutionPolicy {
+            max_iterations: 20,
+            ..crate::definition::ExecutionPolicy::default()
+        },
+        budget: BudgetPolicy {
+            max_tokens_per_run: 100_000,
+            max_cost_per_run_usd: 5.0,
+            max_cost_per_day_usd: 25.0,
+        },
+        trust_level: crate::definition::TrustLevel::Standard,
+        permissions: perms,
+        schedule: None,
+        tags: vec!["analyst".into(), "team".into(), "collaborative".into()],
+        workspace_id: workspace_id.into(),
+    }
+}
+
+/// Create the reporter agent definition.
+pub fn reporter_agent(workspace_id: &str) -> crate::definition::AgentDefinition {
+    crate::definition::AgentDefinition {
+        id: "agt_reporter".into(),
+        name: "Reporter Agent".into(),
+        version: 1,
+        description: Some("Writes polished reports and documents from analysis results.".into()),
+        system_prompt: "You are a reporter agent. Write polished, well-structured reports based on analysis data provided by other agents. Save reports to workspace files and share them via agent_send_file.".into(),
+        model: crate::definition::ModelConfig::default(),
+        tools: collaborative_tools(),
+        memory_policy: crate::definition::MemoryPolicy::default(),
+        execution_policy: crate::definition::ExecutionPolicy::default(),
+        budget: BudgetPolicy::default(),
+        trust_level: crate::definition::TrustLevel::Standard,
+        permissions: collaborative_permissions(),
+        schedule: None,
+        tags: vec!["reporter".into(), "team".into(), "collaborative".into()],
         workspace_id: workspace_id.into(),
     }
 }

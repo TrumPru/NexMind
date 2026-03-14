@@ -6,6 +6,7 @@ members = [
     "core/security",
     "core/model-router",
     "core/memory",
+    "core/agent-comm",
     "core/tool-runtime",
     "core/agent-engine",
     "core/connector",
@@ -44,6 +45,7 @@ async-trait = "0.1"
 # Workspace crates
 nexmind-storage = { path = "core/storage" }
 nexmind-event-bus = { path = "core/event-bus" }
+nexmind-agent-comm = { path = "core/agent-comm" }
 nexmind-security = { path = "core/security" }
 nexmind-model-router = { path = "core/model-router" }
 nexmind-memory = { path = "core/memory" }

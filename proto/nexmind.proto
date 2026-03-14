@@ -26,6 +26,12 @@ service NexMind {
   // Workflows
   rpc RunWorkflow(WorkflowId) returns (stream WorkflowEvent);
 
+  // Teams
+  rpc ListTeams(ListTeamsRequest) returns (TeamList);
+  rpc RunTeam(RunTeamRequest) returns (stream TeamEvent);
+  rpc SendAgentMessage(AgentMessageRequest) returns (AgentMessageResponse);
+  rpc GetTeamMessages(TeamMessagesQuery) returns (TeamMessageList);
+
   // System
   rpc GetHealth(Empty) returns (HealthStatus);
   rpc GetCostSummary(CostQuery) returns (CostSummary);
@@ -223,4 +229,65 @@ message CostByModel {
   string provider = 2;
   int64 cost_microdollars = 3;
   int32 requests = 4;
+}
+
+// ── Teams ───────────────────────────────────────────────────────
+
+message ListTeamsRequest {
+  string workspace_id = 1;
+}
+
+message TeamList {
+  repeated TeamSummary teams = 1;
+}
+
+message TeamSummary {
+  string id = 1;
+  string name = 2;
+  string pattern = 3;
+  int32 member_count = 4;
+  string description = 5;
+}
+
+message RunTeamRequest {
+  string team_id = 1;
+  string input = 2;
+  string workspace_id = 3;
+}
+
+message TeamEvent {
+  string team_id = 1;
+  string event_type = 2;    // "started", "member_completed", "completed", "failed"
+  string data = 3;
+}
+
+message AgentMessageRequest {
+  string team_id = 1;
+  string sender_id = 2;
+  string recipient_id = 3;
+  string content = 4;
+}
+
+message AgentMessageResponse {
+  bool sent = 1;
+  string message_id = 2;
+}
+
+message TeamMessagesQuery {
+  string team_id = 1;
+  string task_id = 2;
+  int32 limit = 3;
+}
+
+message TeamMessageList {
+  repeated TeamMessageEntry messages = 1;
+}
+
+message TeamMessageEntry {
+  string id = 1;
+  string from_agent = 2;
+  string to_agent = 3;
+  string msg_type = 4;
+  string content = 5;
+  string timestamp = 6;
 }
