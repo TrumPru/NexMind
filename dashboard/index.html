@@ -1,247 +1,1198 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NexMind Dashboard</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
-  <style>
-    :root { --sidebar-width: 220px; }
-    body { margin: 0; display: flex; min-height: 100vh; }
-    nav.sidebar { width: var(--sidebar-width); background: var(--pico-card-background-color); border-right: 1px solid var(--pico-muted-border-color); padding: 1rem; display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; }
-    nav.sidebar h2 { margin: 0 0 1.5rem 0; font-size: 1.3rem; }
-    nav.sidebar a { display: block; padding: 0.5rem 0.75rem; margin: 0.15rem 0; border-radius: 6px; text-decoration: none; color: var(--pico-color); cursor: pointer; }
-    nav.sidebar a:hover, nav.sidebar a.active { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
-    main.content { margin-left: var(--sidebar-width); flex: 1; padding: 1.5rem; max-width: 960px; }
-    .chat-messages { max-height: 400px; overflow-y: auto; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
-    .chat-msg { margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 6px; }
-    .chat-msg.user { background: var(--pico-primary-background); color: var(--pico-primary-inverse); margin-left: 20%; }
-    .chat-msg.assistant { background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); margin-right: 20%; }
-    .chat-input { display: flex; gap: 0.5rem; }
-    .chat-input textarea { flex: 1; resize: vertical; min-height: 60px; }
-    .log-area { height: 400px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; font-family: monospace; font-size: 0.85rem; padding: 1rem; border-radius: 6px; white-space: pre-wrap; }
-    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-    .stat-card { background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 8px; padding: 1rem; text-align: center; }
-    .stat-card .value { font-size: 1.8rem; font-weight: bold; color: var(--pico-primary); }
-    .stat-card .label { font-size: 0.85rem; color: var(--pico-muted-color); }
-    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
-    .badge-warn { background: #f0ad4e; color: #fff; }
-    .badge-ok { background: #5cb85c; color: #fff; }
-    .badge-danger { background: #d9534f; color: #fff; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexMind Dashboard v2</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-primary:#0f1117;--bg-secondary:#1a1d27;--bg-card:#22252f;--bg-hover:#2a2d3a;
+  --text-primary:#e4e6eb;--text-secondary:#8b8fa3;--text-muted:#5a5e72;
+  --accent:#6c5ce7;--accent-hover:#7c6cf7;--success:#00d68f;--warning:#ffaa00;--danger:#ff4757;
+  --border:#2a2d3a;--radius:8px;--sidebar-width:220px;
+  --font-mono:'SF Mono','Fira Code','Consolas',monospace;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+[data-theme="light"]{
+  --bg-primary:#ffffff;--bg-secondary:#f5f6fa;--bg-card:#ffffff;--bg-hover:#f0f1f5;
+  --text-primary:#1a1d27;--text-secondary:#5a5e72;--text-muted:#8b8fa3;--border:#e4e6eb;
+}
+html,body{height:100%;font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-primary);font-size:14px;line-height:1.5}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--accent-hover)}
+button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;border-radius:var(--radius);padding:6px 14px;transition:background .15s,opacity .15s}
+button:disabled{opacity:.5;cursor:not-allowed}
+input,textarea,select{font-family:inherit;font-size:inherit;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;outline:none;width:100%;transition:border-color .15s}
+input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+textarea{resize:vertical}
+select{cursor:pointer}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)}
+th{color:var(--text-secondary);font-weight:600;font-size:.85em;text-transform:uppercase;letter-spacing:.03em}
+label{display:block;color:var(--text-secondary);font-size:.85em;margin-bottom:4px}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover:not(:disabled){background:var(--accent-hover)}
+.btn-secondary{background:var(--bg-hover);color:var(--text-primary)}
+.btn-secondary:hover:not(:disabled){background:var(--border)}
+.btn-success{background:var(--success);color:#fff}
+.btn-success:hover:not(:disabled){background:#00c07f}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger:hover:not(:disabled){background:#e0303f}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text-primary)}
+.btn-outline:hover:not(:disabled){background:var(--bg-hover)}
+.btn-sm{padding:4px 10px;font-size:.85em}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75em;font-weight:600}
+.badge-success{background:rgba(0,214,143,.15);color:var(--success)}
+.badge-warning{background:rgba(255,170,0,.15);color:var(--warning)}
+.badge-danger{background:rgba(255,71,87,.15);color:var(--danger)}
+.badge-info{background:rgba(108,92,231,.15);color:var(--accent)}
+
+/* Layout */
+#app{display:flex;height:100vh;overflow:hidden}
+#conn-banner{display:none;position:fixed;top:0;left:0;right:0;z-index:1000;background:var(--warning);color:#000;text-align:center;padding:6px;font-size:.85em;font-weight:600}
+#conn-banner.show{display:block}
+
+/* Header */
+#header{position:fixed;top:0;left:0;right:0;height:48px;background:var(--bg-secondary);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:100}
+#header .logo{font-weight:700;font-size:1.1em;color:var(--text-primary)}
+#header .logo span{color:var(--accent)}
+#header .right{display:flex;align-items:center;gap:12px}
+.health-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.health-dot.ok{background:var(--success)}
+.health-dot.err{background:var(--danger)}
+.health-dot.unknown{background:var(--text-muted)}
+#theme-toggle{background:none;border:none;font-size:1.2em;padding:4px;cursor:pointer;color:var(--text-secondary)}
+#theme-toggle:hover{color:var(--text-primary)}
+
+/* Sidebar */
+#sidebar{position:fixed;top:48px;left:0;bottom:0;width:var(--sidebar-width);background:var(--bg-secondary);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 0;z-index:90;overflow-y:auto}
+#sidebar .nav-item{display:flex;align-items:center;gap:8px;padding:8px 16px;color:var(--text-secondary);cursor:pointer;transition:background .12s,color .12s;font-size:.9em;position:relative}
+#sidebar .nav-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+#sidebar .nav-item.active{background:var(--accent);color:#fff}
+#sidebar .nav-item .nav-badge{position:absolute;right:12px;background:var(--danger);color:#fff;font-size:.7em;padding:1px 6px;border-radius:8px}
+#sidebar .version{margin-top:auto;padding:12px 16px;color:var(--text-muted);font-size:.75em}
+
+/* Main */
+#main{margin-left:var(--sidebar-width);margin-top:48px;flex:1;overflow-y:auto;padding:24px;min-height:0;height:calc(100vh - 48px)}
+
+/* Cards */
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:12px}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.card-header h3{font-size:1em;font-weight:600}
+
+/* Stat cards */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px}
+.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;text-align:center}
+.stat-card .val{font-size:1.6em;font-weight:700;color:var(--accent)}
+.stat-card .lbl{color:var(--text-secondary);font-size:.8em;margin-top:2px}
+
+/* Page header */
+.page-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.page-hdr h2{font-size:1.3em;font-weight:700}
+.page-hdr .actions{display:flex;gap:8px}
+
+/* Loading/Empty/Error */
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:var(--text-secondary)}
+.loading-wrap .spinner{width:32px;height:32px;margin-bottom:12px}
+.empty-state{text-align:center;padding:60px 20px;color:var(--text-secondary)}
+.empty-state .icon{font-size:2.5em;margin-bottom:8px}
+.empty-state p{margin-bottom:12px}
+.error-state{text-align:center;padding:40px 20px;color:var(--danger)}
+.error-state p{margin-bottom:12px}
+
+/* Toast */
+#toast-container{position:fixed;top:56px;right:16px;z-index:2000;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 16px;font-size:.85em;box-shadow:0 4px 12px rgba(0,0,0,.3);animation:toastIn .25s ease;max-width:340px}
+.toast.success{border-left:3px solid var(--success)}
+.toast.error{border-left:3px solid var(--danger)}
+.toast.info{border-left:3px solid var(--accent)}
+@keyframes toastIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+
+/* ========== CHAT ========== */
+.chat-container{display:flex;flex-direction:column;height:calc(100vh - 48px - 48px)}
+.chat-top{display:flex;align-items:center;gap:12px;padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px;flex-shrink:0}
+.chat-top select{width:auto;max-width:200px}
+.chat-messages{flex:1;overflow-y:auto;padding:4px 0;min-height:0}
+.chat-bubble{max-width:75%;margin-bottom:12px;padding:10px 14px;border-radius:12px;font-size:.9em;line-height:1.55;word-wrap:break-word;position:relative}
+.chat-bubble.user{background:var(--accent);color:#fff;margin-left:auto;border-bottom-right-radius:4px}
+.chat-bubble.assistant{background:var(--bg-card);border:1px solid var(--border);margin-right:auto;border-bottom-left-radius:4px}
+.chat-bubble code{font-family:var(--font-mono);font-size:.85em;background:rgba(0,0,0,.2);padding:1px 4px;border-radius:3px}
+.chat-bubble pre{background:rgba(0,0,0,.3);border-radius:6px;padding:10px;margin:8px 0;overflow-x:auto;position:relative}
+.chat-bubble pre code{background:none;padding:0;font-size:.82em;display:block}
+.copy-btn{position:absolute;top:4px;right:4px;background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:.7em;cursor:pointer;opacity:0;transition:opacity .15s}
+.chat-bubble pre:hover .copy-btn{opacity:1}
+.tool-card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);margin:8px 0;overflow:hidden}
+.tool-card-header{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:.82em;color:var(--text-secondary)}
+.tool-card-header .tool-name{font-family:var(--font-mono);color:var(--accent);font-weight:600}
+.tool-card-header .tool-status{margin-left:auto}
+.tool-card-body{display:none;padding:8px 12px;border-top:1px solid var(--border);font-family:var(--font-mono);font-size:.78em;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:var(--text-secondary)}
+.tool-card.open .tool-card-body{display:block}
+.chat-input-wrap{flex-shrink:0;border-top:1px solid var(--border);padding-top:12px;display:flex;gap:8px;align-items:flex-end}
+.chat-input-wrap textarea{flex:1;min-height:42px;max-height:150px;padding:10px 12px}
+.chat-input-wrap button{height:42px;padding:0 20px}
+.chat-streaming .spinner{margin-left:8px}
+
+/* ========== INTEGRATIONS ========== */
+.int-group{margin-bottom:24px}
+.int-group h3{font-size:.9em;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border)}
+.int-card{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;cursor:pointer;transition:background .12s}
+.int-card:hover{background:var(--bg-hover)}
+.int-card .status-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.int-card .status-dot.connected{background:var(--success)}
+.int-card .status-dot.disconnected{background:var(--text-muted)}
+.int-card .int-info{flex:1}
+.int-card .int-name{font-weight:600;font-size:.9em}
+.int-card .int-desc{font-size:.8em;color:var(--text-secondary)}
+.int-card .int-arrow{color:var(--text-muted);font-size:1.1em}
+.int-detail{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:8px}
+.int-detail .field-group{margin-bottom:14px}
+.int-detail .help-text{font-size:.78em;color:var(--text-muted);margin-top:3px}
+.int-detail .btn-row{display:flex;gap:8px;margin-top:16px}
+
+/* ========== SETTINGS ========== */
+.settings-section{margin-bottom:28px}
+.settings-section h3{font-size:1em;font-weight:600;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.settings-section .field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.settings-section .field-row.full{grid-template-columns:1fr}
+.settings-section .chk-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.settings-section .chk-row input[type=checkbox]{width:auto}
+.danger-zone{border:1px solid var(--danger);border-radius:var(--radius);padding:16px}
+.danger-zone h3{color:var(--danger);border-bottom-color:var(--danger)!important}
+
+/* ========== MEMORY ========== */
+.mem-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;margin-bottom:8px;display:flex;align-items:flex-start;gap:12px}
+.mem-card .mem-content{flex:1}
+.mem-card .mem-type{font-size:.75em;color:var(--accent);font-weight:600;text-transform:uppercase}
+.mem-card .mem-text{margin-top:4px;font-size:.9em}
+.mem-card .mem-meta{margin-top:4px;font-size:.75em;color:var(--text-muted)}
+.mem-card .mem-actions{display:flex;gap:4px;flex-shrink:0}
+
+/* ========== LOGS ========== */
+.log-entry{font-family:var(--font-mono);font-size:.8em;padding:4px 8px;border-bottom:1px solid var(--border)}
+.log-entry.DEBUG{color:var(--text-muted)}
+.log-entry.INFO{color:var(--text-primary)}
+.log-entry.WARNING{color:var(--warning)}
+.log-entry.ERROR{color:var(--danger)}
+.log-entry.CRITICAL{color:var(--danger);font-weight:700}
+.log-container{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);max-height:calc(100vh - 200px);overflow-y:auto;overflow-x:hidden}
+
+/* ========== SKILLS ========== */
+.skill-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+.skill-card .skill-info{flex:1}
+.skill-card .skill-name{font-weight:600;font-size:.9em}
+.skill-card .skill-desc{font-size:.8em;color:var(--text-secondary);margin-top:2px}
+
+/* Toggle switch */
+.toggle{position:relative;width:36px;height:20px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .slider{position:absolute;top:0;left:0;right:0;bottom:0;background:var(--border);border-radius:10px;cursor:pointer;transition:background .2s}
+.toggle .slider::before{content:'';position:absolute;width:16px;height:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:transform .2s}
+.toggle input:checked+.slider{background:var(--success)}
+.toggle input:checked+.slider::before{transform:translateX(16px)}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text-muted)}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:3000}
+.modal{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;max-width:440px;width:90%}
+.modal h3{margin-bottom:12px}
+.modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+
+/* Responsive */
+@media(max-width:768px){
+  #sidebar{display:none}
+  #sidebar.open{display:flex;width:100%;z-index:200}
+  #main{margin-left:0}
+  .chat-bubble{max-width:90%}
+  .settings-section .field-row{grid-template-columns:1fr}
+  #header .menu-btn{display:block}
+}
+@media(min-width:769px){
+  #header .menu-btn{display:none}
+}
+</style>
 </head>
-<body x-data="app()" x-init="init()">
+<body>
+<div id="conn-banner">Connection lost. Reconnecting...</div>
+<div id="toast-container"></div>
 
-  <nav class="sidebar">
-    <h2>NexMind</h2>
-    <template x-for="v in views" :key="v.id">
-      <a :class="{ active: view === v.id }" @click="view = v.id" x-text="v.label"></a>
-    </template>
-    <div style="margin-top:auto; font-size:0.8rem; color:var(--pico-muted-color);">
-      <span x-text="status"></span>
-    </div>
-  </nav>
+<header id="header">
+  <div style="display:flex;align-items:center;gap:12px">
+    <button class="menu-btn btn-outline btn-sm" onclick="document.getElementById('sidebar').classList.toggle('open')">&#9776;</button>
+    <div class="logo">Nex<span>Mind</span></div>
+  </div>
+  <div class="right">
+    <span id="health-indicator"><span class="health-dot unknown"></span><span id="health-text">Checking...</span></span>
+    <button id="theme-toggle" title="Toggle theme">&#9789;</button>
+  </div>
+</header>
 
-  <main class="content">
-    <!-- Chat -->
-    <div x-show="view==='chat'">
-      <h3>Chat</h3>
-      <div class="chat-messages" x-ref="chatBox">
-        <template x-for="m in messages" :key="m.id">
-          <div class="chat-msg" :class="m.role">
-            <small x-text="m.role" style="text-transform:capitalize;opacity:0.6"></small>
-            <div x-text="m.text"></div>
-          </div>
-        </template>
-        <div x-show="chatLoading"><em>Thinking...</em></div>
-      </div>
-      <div class="chat-input">
-        <textarea x-model="chatInput" @keydown.ctrl.enter="sendChat()" placeholder="Type a message... (Ctrl+Enter to send)"></textarea>
-        <button @click="sendChat()" :disabled="chatLoading">Send</button>
-      </div>
-    </div>
+<nav id="sidebar"></nav>
 
-    <!-- Agents -->
-    <div x-show="view==='agents'">
-      <h3>Agents</h3>
-      <button @click="loadAgents()" class="outline" style="margin-bottom:1rem">Refresh</button>
-      <table>
-        <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Description</th></tr></thead>
-        <tbody>
-          <template x-for="a in agents" :key="a.id">
-            <tr>
-              <td x-text="a.id" style="font-family:monospace;font-size:0.85rem"></td>
-              <td x-text="a.name"></td>
-              <td><span class="badge badge-ok" x-text="a.status"></span></td>
-              <td x-text="a.description"></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-      <p x-show="agents.length===0">No agents registered.</p>
-    </div>
+<main id="main">
+  <div id="content"></div>
+</main>
 
-    <!-- Approvals -->
-    <div x-show="view==='approvals'">
-      <h3>Pending Approvals</h3>
-      <button @click="loadApprovals()" class="outline" style="margin-bottom:1rem">Refresh</button>
-      <template x-for="ap in approvals" :key="ap.id">
-        <article>
-          <header>
-            <strong x-text="ap.tool_id"></strong>
-            <span class="badge badge-warn" x-text="ap.risk_level" style="margin-left:0.5rem"></span>
-          </header>
-          <p x-text="ap.action_description"></p>
-          <small>Agent: <span x-text="ap.agent_id"></span> | Created: <span x-text="ap.created_at"></span></small>
-          <footer style="display:flex;gap:0.5rem">
-            <button @click="approvalAction(ap.id, 'approve')" class="outline">Approve</button>
-            <button @click="approvalAction(ap.id, 'deny')" class="outline secondary">Deny</button>
-          </footer>
-        </article>
-      </template>
-      <p x-show="approvals.length===0">No pending approvals.</p>
-    </div>
+<div id="modal-root"></div>
 
-    <!-- Memory (placeholder) -->
-    <div x-show="view==='memory'">
-      <h3>Memory</h3>
-      <p>Memory browser coming soon.</p>
-    </div>
+<script>
+(function(){
+"use strict";
 
-    <!-- Costs -->
-    <div x-show="view==='costs'">
-      <h3>Costs</h3>
-      <div style="margin-bottom:1rem">
-        <select x-model="costPeriod" @change="loadCosts()" style="width:auto;display:inline-block">
-          <option value="today">Today</option>
-          <option value="7d">Last 7 Days</option>
-          <option value="30d">Last 30 Days</option>
-        </select>
-      </div>
-      <div class="stat-grid">
-        <div class="stat-card"><div class="value" x-text="'$' + (costs.total_microdollars / 1000000).toFixed(4)"></div><div class="label">Total Cost</div></div>
-        <div class="stat-card"><div class="value" x-text="costs.total_requests"></div><div class="label">Requests</div></div>
-        <div class="stat-card"><div class="value" x-text="costs.total_input_tokens?.toLocaleString() || '0'"></div><div class="label">Input Tokens</div></div>
-        <div class="stat-card"><div class="value" x-text="costs.total_output_tokens?.toLocaleString() || '0'"></div><div class="label">Output Tokens</div></div>
-      </div>
-      <h4>By Model</h4>
-      <table>
-        <thead><tr><th>Model</th><th>Cost</th></tr></thead>
-        <tbody>
-          <template x-for="m in costs.by_model || []" :key="m.model">
-            <tr><td x-text="m.model"></td><td x-text="'$' + (m.cost_microdollars / 1000000).toFixed(4)"></td></tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
+// ============ STORE ============
+const store = {
+  token: new URLSearchParams(location.search).get('token') || '',
+  view: 'chat',
+  health: null,
+  agents: [],
+  approvals: [],
+  messages: JSON.parse(localStorage.getItem('nexmind_messages') || '[]'),
+  sessionId: localStorage.getItem('nexmind_session') || genId(),
+  currentAgent: localStorage.getItem('nexmind_agent') || '',
+  costs: {},
+  costPeriod: '7d',
+  settings: {},
+  models: [],
+  integrations: [],
+  memories: [],
+  memorySearch: '',
+  memoryType: '',
+  logs: [],
+  logLevel: 'ALL',
+  skills: [],
+  tasks: [],
+  ws: null,
+  wsConnected: false,
+  wsRetryDelay: 1000,
+  streaming: false,
+  streamBuf: '',
+  loading: {},
+  errors: {},
+  settingsStats: null,
+  openIntegration: null,
+};
 
-    <!-- Logs -->
-    <div x-show="view==='logs'">
-      <h3>Logs</h3>
-      <button @click="loadLogs()" class="outline" style="margin-bottom:1rem">Refresh</button>
-      <div class="log-area" x-ref="logArea" x-text="logText"></div>
-    </div>
+function genId(){ return 'sess_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36) }
 
-    <!-- Settings -->
-    <div x-show="view==='settings'">
-      <h3>Settings / Status</h3>
-      <button @click="loadHealth()" class="outline" style="margin-bottom:1rem">Refresh</button>
-      <table>
-        <tbody>
-          <tr><td>Status</td><td><span class="badge" :class="health.status==='ok' ? 'badge-ok' : 'badge-danger'" x-text="health.status"></span></td></tr>
-          <tr><td>Version</td><td x-text="health.version"></td></tr>
-          <tr><td>Uptime</td><td x-text="formatUptime(health.uptime_seconds)"></td></tr>
-          <tr><td>Database</td><td x-text="health.database_ok ? 'OK' : 'Error'"></td></tr>
-          <tr><td>Active Agents</td><td x-text="health.active_agents"></td></tr>
-          <tr><td>Pending Approvals</td><td x-text="health.pending_approvals"></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </main>
+// ============ API ============
+function api(path, opts = {}) {
+  const sep = path.includes('?') ? '&' : '?';
+  const url = path + sep + 'token=' + encodeURIComponent(store.token);
+  const headers = { 'Content-Type': 'application/json' };
+  return fetch(url, { headers, ...opts })
+    .then(r => {
+      if (r.status === 401) throw new Error('Unauthorized');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+}
 
-  <script>
-    function app() {
-      const token = new URLSearchParams(window.location.search).get('token') || '';
-      return {
-        view: 'chat',
-        views: [
-          { id: 'chat', label: 'Chat' },
-          { id: 'agents', label: 'Agents' },
-          { id: 'approvals', label: 'Approvals' },
-          { id: 'memory', label: 'Memory' },
-          { id: 'costs', label: 'Costs' },
-          { id: 'logs', label: 'Logs' },
-          { id: 'settings', label: 'Settings' },
-        ],
-        status: 'Connecting...',
-        token,
-        // Chat
-        messages: [],
-        chatInput: '',
-        chatLoading: false,
-        msgCounter: 0,
-        // Agents
-        agents: [],
-        // Approvals
-        approvals: [],
-        // Costs
-        costPeriod: '7d',
-        costs: { total_microdollars: 0, total_requests: 0, total_input_tokens: 0, total_output_tokens: 0, by_model: [] },
-        // Logs
-        logText: '',
-        // Health
-        health: {},
+// ============ THEME ============
+function getTheme(){ return localStorage.getItem('nexmind_theme') || 'dark' }
+function setTheme(t){
+  localStorage.setItem('nexmind_theme', t);
+  document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : '');
+  document.getElementById('theme-toggle').textContent = t === 'light' ? '\u2600' : '\u263D';
+}
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  setTheme(getTheme() === 'dark' ? 'light' : 'dark');
+});
+setTheme(getTheme());
 
-        async init() {
-          await this.loadHealth();
-          this.status = this.health.status === 'ok' ? 'Connected' : 'Degraded';
-        },
+// ============ TOAST ============
+function toast(msg, type) {
+  type = type || 'info';
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(() => el.remove(), 300); }, 3500);
+}
 
-        api(path, opts = {}) {
-          const sep = path.includes('?') ? '&' : '?';
-          return fetch(path + sep + 'token=' + encodeURIComponent(this.token), {
-            headers: { 'Content-Type': 'application/json' },
-            ...opts,
-          }).then(r => { if (r.status === 401) throw new Error('Unauthorized'); return r.json(); });
-        },
+// ============ MODAL ============
+function showModal(html) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = '<div class="modal-overlay"><div class="modal">' + html + '</div></div>';
+  root.querySelector('.modal-overlay').addEventListener('click', function(e){ if(e.target===this) closeModal(); });
+}
+function closeModal(){ document.getElementById('modal-root').innerHTML = ''; }
 
-        async sendChat() {
-          const text = this.chatInput.trim();
-          if (!text) return;
-          this.messages.push({ id: ++this.msgCounter, role: 'user', text });
-          this.chatInput = '';
-          this.chatLoading = true;
-          try {
-            const data = await this.api('/api/chat', { method: 'POST', body: JSON.stringify({ message: text }) });
-            this.messages.push({ id: ++this.msgCounter, role: 'assistant', text: data.response || '(no response)' });
-          } catch (e) {
-            this.messages.push({ id: ++this.msgCounter, role: 'assistant', text: 'Error: ' + e.message });
-          }
-          this.chatLoading = false;
-          this.$nextTick(() => { if (this.$refs.chatBox) this.$refs.chatBox.scrollTop = this.$refs.chatBox.scrollHeight; });
-        },
+// ============ NAV ============
+const navItems = [
+  { id:'chat', label:'Chat', icon:'\uD83D\uDCAC' },
+  { id:'agents', label:'Agents', icon:'\uD83E\uDD16' },
+  { id:'tasks', label:'Tasks', icon:'\u2611' },
+  { id:'approvals', label:'Approvals', icon:'\u26A0', badgeFn:()=>store.approvals.length },
+  { id:'memory', label:'Memory', icon:'\uD83E\uDDE0' },
+  { id:'costs', label:'Costs', icon:'\uD83D\uDCB0' },
+  { id:'integrations', label:'Integrations', icon:'\uD83D\uDD17' },
+  { id:'skills', label:'Skills', icon:'\u2699' },
+  { id:'logs', label:'Logs', icon:'\uD83D\uDCC4' },
+  { id:'settings', label:'Settings', icon:'\u2699' },
+];
 
-        async loadAgents() { try { const d = await this.api('/api/agents'); this.agents = d.agents || []; } catch (e) { console.error(e); } },
-        async loadApprovals() { try { const d = await this.api('/api/approvals'); this.approvals = d.approvals || []; } catch (e) { console.error(e); } },
-        async loadCosts() { try { this.costs = await this.api('/api/costs?period=' + this.costPeriod); } catch (e) { console.error(e); } },
-        async loadLogs() { try { const d = await this.api('/api/logs'); this.logText = (d.entries || []).join('\n'); this.$nextTick(() => { if (this.$refs.logArea) this.$refs.logArea.scrollTop = this.$refs.logArea.scrollHeight; }); } catch (e) { console.error(e); } },
-        async loadHealth() { try { this.health = await this.api('/api/health'); } catch (e) { this.health = { status: 'unreachable' }; } },
+function renderSidebar(){
+  const sb = document.getElementById('sidebar');
+  let h = '';
+  navItems.forEach(n => {
+    const active = store.view === n.id ? ' active' : '';
+    let badge = '';
+    if (n.badgeFn) { const c = n.badgeFn(); if(c>0) badge = '<span class="nav-badge">'+c+'</span>'; }
+    h += '<div class="nav-item'+active+'" data-nav="'+n.id+'">'+n.icon+' '+n.label+badge+'</div>';
+  });
+  h += '<div class="version">v0.1.0</div>';
+  sb.innerHTML = h;
+}
 
-        async approvalAction(id, action) {
-          try {
-            await this.api('/api/approvals/' + id + '/' + action, { method: 'POST' });
-            await this.loadApprovals();
-          } catch (e) { alert('Error: ' + e.message); }
-        },
+document.getElementById('sidebar').addEventListener('click', function(e){
+  const item = e.target.closest('[data-nav]');
+  if(!item) return;
+  store.view = item.dataset.nav;
+  location.hash = store.view;
+  renderAll();
+  document.getElementById('sidebar').classList.remove('open');
+});
 
-        formatUptime(s) {
-          if (!s) return '0s';
-          const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
-          return (h > 0 ? h + 'h ' : '') + (m > 0 ? m + 'm ' : '') + sec + 's';
-        },
-      };
+// ============ ROUTING ============
+function initRoute(){
+  const h = location.hash.replace('#','');
+  if(h && navItems.find(n=>n.id===h)) store.view = h;
+  else store.view = 'chat';
+}
+window.addEventListener('hashchange', () => { initRoute(); renderAll(); });
+
+// ============ HEALTH ============
+async function checkHealth(){
+  try {
+    store.health = await api('/api/health');
+    updateHealthUI();
+  } catch(e) {
+    store.health = { status: 'unreachable' };
+    updateHealthUI();
+  }
+}
+function updateHealthUI(){
+  const dot = document.querySelector('#health-indicator .health-dot');
+  const txt = document.getElementById('health-text');
+  if(!store.health || store.health.status === 'unreachable'){
+    dot.className = 'health-dot err'; txt.textContent = 'Unreachable';
+  } else if(store.health.status === 'ok' || store.health.status === 'healthy'){
+    dot.className = 'health-dot ok'; txt.textContent = 'Healthy';
+  } else {
+    dot.className = 'health-dot err'; txt.textContent = store.health.status || 'Degraded';
+  }
+}
+
+// ============ WEBSOCKET ============
+function wsConnect(){
+  if(store.ws && store.ws.readyState < 2) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = proto + '//' + location.host + '/ws?token=' + encodeURIComponent(store.token);
+  try { store.ws = new WebSocket(url); } catch(e){ return scheduleReconnect(); }
+  store.ws.onopen = function(){
+    store.wsConnected = true;
+    store.wsRetryDelay = 1000;
+    document.getElementById('conn-banner').classList.remove('show');
+  };
+  store.ws.onclose = function(){
+    store.wsConnected = false;
+    document.getElementById('conn-banner').classList.add('show');
+    scheduleReconnect();
+  };
+  store.ws.onerror = function(){};
+  store.ws.onmessage = function(evt){
+    try { handleWsMessage(JSON.parse(evt.data)); } catch(e){}
+  };
+}
+function scheduleReconnect(){
+  setTimeout(wsConnect, store.wsRetryDelay);
+  store.wsRetryDelay = Math.min(store.wsRetryDelay * 2, 30000);
+}
+function handleWsMessage(msg){
+  switch(msg.type){
+    case 'chat_delta':
+      store.streaming = true;
+      store.streamBuf += (msg.text || msg.delta || '');
+      updateStreamingBubble();
+      break;
+    case 'tool_start':
+      appendToolCard(msg.tool_name, msg.arguments, null, true);
+      break;
+    case 'tool_result':
+      finalizeToolCard(msg.tool_name, msg.result, msg.success);
+      break;
+    case 'chat_complete':
+      finishStreaming(msg.usage, msg.cost);
+      break;
+    case 'error':
+      store.streaming = false;
+      store.streamBuf = '';
+      appendMessage('assistant', 'Error: ' + (msg.message || 'Unknown error'));
+      break;
+    case 'approval_required':
+      loadApprovals();
+      toast('New approval request', 'info');
+      break;
+  }
+}
+function wsSend(data){
+  if(store.ws && store.ws.readyState === 1) store.ws.send(JSON.stringify(data));
+}
+
+// ============ MARKDOWN ============
+function renderMd(text){
+  if(!text) return '';
+  let h = escHtml(text);
+  // code blocks
+  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code){
+    return '<pre><code class="lang-'+lang+'">'+code+'</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>';
+  });
+  // inline code
+  h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // bold
+  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // italic
+  h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // unordered lists
+  h = h.replace(/^- (.+)$/gm, '<li>$1</li>');
+  h = h.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
+  // ordered lists
+  h = h.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+  // line breaks
+  h = h.replace(/\n/g, '<br>');
+  return h;
+}
+function escHtml(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+window.copyCode = function(btn){
+  const code = btn.previousElementSibling;
+  navigator.clipboard.writeText(code.textContent).then(()=>{
+    btn.textContent = 'Copied!';
+    setTimeout(()=>{ btn.textContent = 'Copy'; }, 1500);
+  });
+};
+
+// ============ CHAT ============
+function appendMessage(role, text){
+  store.messages.push({ id: Date.now()+'_'+Math.random(), role, text, ts: new Date().toISOString() });
+  saveMessages();
+  if(store.view === 'chat') renderChat();
+}
+function saveMessages(){
+  localStorage.setItem('nexmind_messages', JSON.stringify(store.messages));
+  localStorage.setItem('nexmind_session', store.sessionId);
+}
+function newConversation(){
+  store.messages = [];
+  store.sessionId = genId();
+  store.streamBuf = '';
+  store.streaming = false;
+  saveMessages();
+  renderChat();
+}
+function sendChatMessage(){
+  const ta = document.getElementById('chat-input');
+  if(!ta) return;
+  const text = ta.value.trim();
+  if(!text) return;
+  appendMessage('user', text);
+  ta.value = '';
+  ta.style.height = 'auto';
+  store.streaming = true;
+  store.streamBuf = '';
+  if(store.wsConnected){
+    wsSend({ type:'chat', message: text, agent_id: store.currentAgent, session_id: store.sessionId });
+  } else {
+    api('/api/chat', { method:'POST', body: JSON.stringify({ message: text, agent_id: store.currentAgent, session_id: store.sessionId }) })
+      .then(d => { appendMessage('assistant', d.response || '(no response)'); store.streaming = false; })
+      .catch(e => { appendMessage('assistant', 'Error: '+e.message); store.streaming = false; });
+  }
+  renderChat();
+}
+function updateStreamingBubble(){
+  const el = document.getElementById('streaming-bubble');
+  if(el) el.innerHTML = renderMd(store.streamBuf);
+  scrollChatBottom();
+}
+function appendToolCard(name, args, result, pending){
+  const id = 'tool_'+Date.now();
+  const msgArea = document.getElementById('chat-messages');
+  if(!msgArea) return;
+  const div = document.createElement('div');
+  div.className = 'tool-card';
+  div.id = id;
+  div.dataset.toolName = name;
+  div.innerHTML = '<div class="tool-card-header" onclick="this.parentElement.classList.toggle(\'open\')">'+
+    '<span class="tool-name">'+escHtml(name)+'</span>'+
+    '<span class="tool-status">'+(pending?'<span class="spinner"></span>':'')+'</span></div>'+
+    '<div class="tool-card-body">Arguments:\n'+escHtml(typeof args==='string'?args:JSON.stringify(args,null,2))+
+    (result!=null?'\n\nResult:\n'+escHtml(typeof result==='string'?result:JSON.stringify(result,null,2)):'')+
+    '</div>';
+  msgArea.appendChild(div);
+  scrollChatBottom();
+}
+function finalizeToolCard(name, result, success){
+  const cards = document.querySelectorAll('.tool-card');
+  for(let i=cards.length-1;i>=0;i--){
+    if(cards[i].dataset.toolName === name){
+      const st = cards[i].querySelector('.tool-status');
+      st.innerHTML = success!==false ? '<span class="badge badge-success">OK</span>' : '<span class="badge badge-danger">Failed</span>';
+      const body = cards[i].querySelector('.tool-card-body');
+      body.textContent += '\n\nResult:\n'+(typeof result==='string'?result:JSON.stringify(result,null,2));
+      break;
     }
-  </script>
+  }
+}
+function finishStreaming(usage, cost){
+  if(store.streamBuf){
+    appendMessage('assistant', store.streamBuf);
+  }
+  store.streaming = false;
+  store.streamBuf = '';
+  renderChat();
+}
+function scrollChatBottom(){
+  const el = document.getElementById('chat-messages');
+  if(el) el.scrollTop = el.scrollHeight;
+}
+
+function renderChat(){
+  const c = document.getElementById('content');
+  let agentOpts = '<option value="">Default Agent</option>';
+  store.agents.forEach(a => { agentOpts += '<option value="'+escHtml(a.id)+'"'+(store.currentAgent===a.id?' selected':'')+'>'+escHtml(a.name||a.id)+'</option>'; });
+
+  let msgs = '';
+  store.messages.forEach(m => {
+    if(m.role==='user'){
+      msgs += '<div class="chat-bubble user">'+escHtml(m.text)+'</div>';
+    } else {
+      msgs += '<div class="chat-bubble assistant">'+renderMd(m.text)+'</div>';
+    }
+  });
+  if(store.streaming){
+    msgs += '<div class="chat-bubble assistant" id="streaming-bubble">'+renderMd(store.streamBuf)+'<span class="spinner" style="margin-left:6px"></span></div>';
+  }
+
+  c.innerHTML = '<div class="chat-container">'+
+    '<div class="chat-top">'+
+      '<select id="agent-select" onchange="window._setAgent(this.value)">'+agentOpts+'</select>'+
+      '<button class="btn-outline btn-sm" onclick="window._newConvo()">New Conversation</button>'+
+    '</div>'+
+    '<div class="chat-messages" id="chat-messages">'+msgs+'</div>'+
+    '<div class="chat-input-wrap">'+
+      '<textarea id="chat-input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" rows="1"></textarea>'+
+      '<button class="btn-primary" onclick="window._sendChat()" '+(store.streaming?'disabled':'')+'>Send</button>'+
+    '</div>'+
+  '</div>';
+
+  const ta = document.getElementById('chat-input');
+  if(ta){
+    ta.addEventListener('keydown', function(e){
+      if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChatMessage(); }
+    });
+    ta.addEventListener('input', function(){
+      this.style.height='auto';
+      this.style.height=Math.min(this.scrollHeight,150)+'px';
+    });
+  }
+  scrollChatBottom();
+}
+window._sendChat = sendChatMessage;
+window._newConvo = newConversation;
+window._setAgent = function(v){ store.currentAgent = v; localStorage.setItem('nexmind_agent', v); };
+
+// ============ AGENTS ============
+async function loadAgents(){
+  store.loading.agents = true; store.errors.agents = null; renderView();
+  try {
+    const d = await api('/api/agents');
+    store.agents = d.agents || d || [];
+    store.loading.agents = false;
+  } catch(e){ store.errors.agents = e.message; store.loading.agents = false; }
+  renderView();
+}
+function renderAgents(){
+  const c = document.getElementById('content');
+  if(store.loading.agents){ c.innerHTML = loadingHtml(); return; }
+  if(store.errors.agents){ c.innerHTML = errorHtml(store.errors.agents, 'loadAgents()'); return; }
+  if(!store.agents.length){ c.innerHTML = '<div class="page-hdr"><h2>Agents</h2><div class="actions"><button class="btn-outline btn-sm" onclick="loadAgents()">Refresh</button></div></div>'+emptyHtml('No agents registered','Register an agent to get started'); return; }
+  let rows = '';
+  store.agents.forEach(a => {
+    const st = a.status === 'active' ? '<span class="badge badge-success">active</span>' : '<span class="badge badge-info">'+(escHtml(a.status||'unknown'))+'</span>';
+    rows += '<tr><td style="font-family:var(--font-mono);font-size:.85em">'+escHtml(a.id||'')+'</td><td>'+escHtml(a.name||'')+'</td><td>'+st+'</td><td>'+escHtml(a.description||'')+'</td></tr>';
+  });
+  c.innerHTML = '<div class="page-hdr"><h2>Agents</h2><div class="actions"><button class="btn-outline btn-sm" onclick="loadAgents()">Refresh</button></div></div>'+
+    '<table><thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Description</th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+
+// ============ TASKS ============
+async function loadTasks(){
+  store.loading.tasks = true; store.errors.tasks = null; renderView();
+  try {
+    const d = await api('/api/tasks');
+    store.tasks = d.tasks || d || [];
+    store.loading.tasks = false;
+  } catch(e){ store.errors.tasks = e.message; store.loading.tasks = false; }
+  renderView();
+}
+function renderTasks(){
+  const c = document.getElementById('content');
+  if(store.loading.tasks){ c.innerHTML = loadingHtml(); return; }
+  if(store.errors.tasks){ c.innerHTML = errorHtml(store.errors.tasks, 'loadTasks()'); return; }
+  if(!store.tasks.length){ c.innerHTML = '<div class="page-hdr"><h2>Tasks</h2><div class="actions"><button class="btn-outline btn-sm" onclick="loadTasks()">Refresh</button></div></div>'+emptyHtml('No tasks yet','Tasks will appear here when agents create them'); return; }
+  let rows = '';
+  store.tasks.forEach(t => {
+    const st = t.status === 'completed' ? 'badge-success' : t.status === 'failed' ? 'badge-danger' : t.status === 'running' ? 'badge-info' : 'badge-warning';
+    rows += '<tr><td style="font-family:var(--font-mono);font-size:.85em">'+escHtml(t.id||'')+'</td><td>'+escHtml(t.name||t.description||'')+'</td><td><span class="badge '+st+'">'+escHtml(t.status||'pending')+'</span></td><td>'+escHtml(t.agent_id||'')+'</td><td>'+escHtml(t.created_at||'')+'</td></tr>';
+  });
+  c.innerHTML = '<div class="page-hdr"><h2>Tasks</h2><div class="actions"><button class="btn-outline btn-sm" onclick="loadTasks()">Refresh</button></div></div>'+
+    '<table><thead><tr><th>ID</th><th>Description</th><th>Status</th><th>Agent</th><th>Created</th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+
+// ============ APPROVALS ============
+async function loadApprovals(){
+  store.loading.approvals = true; store.errors.approvals = null; renderView();
+  try {
+    const d = await api('/api/approvals');
+    store.approvals = d.approvals || d || [];
+    store.loading.approvals = false;
+  } catch(e){ store.errors.approvals = e.message; store.loading.approvals = false; }
+  renderSidebar();
+  renderView();
+}
+async function approvalAction(id, action){
+  try {
+    await api('/api/approvals/'+id+'/'+action, { method:'POST' });
+    toast(action === 'approve' ? 'Approved' : 'Denied', 'success');
+    loadApprovals();
+  } catch(e){ toast('Error: '+e.message, 'error'); }
+}
+window._approve = function(id){ approvalAction(id, 'approve'); };
+window._deny = function(id){ approvalAction(id, 'deny'); };
+
+function renderApprovals(){
+  const c = document.getElementById('content');
+  if(store.loading.approvals){ c.innerHTML = loadingHtml(); return; }
+  if(store.errors.approvals){ c.innerHTML = errorHtml(store.errors.approvals, 'loadApprovals()'); return; }
+  let h = '<div class="page-hdr"><h2>Pending Approvals</h2><div class="actions"><button class="btn-outline btn-sm" onclick="loadApprovals()">Refresh</button></div></div>';
+  if(!store.approvals.length){ h += emptyHtml('No pending approvals','All clear! Approvals will appear here when agents need authorization'); c.innerHTML = h; return; }
+  store.approvals.forEach(a => {
+    const risk = a.risk_level === 'high' ? 'badge-danger' : a.risk_level === 'medium' ? 'badge-warning' : 'badge-info';
+    h += '<div class="card"><div class="card-header"><h3>'+escHtml(a.tool_id||a.tool||'')+'</h3><span class="badge '+risk+'">'+escHtml(a.risk_level||'unknown')+'</span></div>'+
+      '<p style="margin-bottom:8px;font-size:.9em">'+escHtml(a.action_description||a.description||'')+'</p>'+
+      '<div style="font-size:.8em;color:var(--text-muted);margin-bottom:12px">Agent: '+escHtml(a.agent_id||'')+' | '+escHtml(a.created_at||'')+'</div>'+
+      '<div style="display:flex;gap:8px"><button class="btn-success btn-sm" onclick="_approve(\''+a.id+'\')">Approve</button><button class="btn-danger btn-sm" onclick="_deny(\''+a.id+'\')">Deny</button></div></div>';
+  });
+  c.innerHTML = h;
+}
+
+// ============ MEMORY ============
+async function loadMemory(){
+  store.loading.memory = true; store.errors.memory = null; renderView();
+  try {
+    let url = '/api/memory?limit=100';
+    if(store.memorySearch) url += '&q='+encodeURIComponent(store.memorySearch);
+    if(store.memoryType) url += '&type='+encodeURIComponent(store.memoryType);
+    const d = await api(url);
+    store.memories = d.memories || d || [];
+    store.loading.memory = false;
+  } catch(e){ store.errors.memory = e.message; store.loading.memory = false; }
+  renderView();
+}
+window._memSearch = function(){
+  store.memorySearch = document.getElementById('mem-search')?.value || '';
+  store.memoryType = document.getElementById('mem-type')?.value || '';
+  loadMemory();
+};
+window._memPin = function(id){
+  api('/api/memory/'+id+'/pin', { method:'POST' }).then(()=>{ toast('Pinned','success'); loadMemory(); }).catch(e=>toast('Error: '+e.message,'error'));
+};
+window._memDel = function(id){
+  if(!confirm('Delete this memory?')) return;
+  api('/api/memory/'+id, { method:'DELETE' }).then(()=>{ toast('Deleted','success'); loadMemory(); }).catch(e=>toast('Error: '+e.message,'error'));
+};
+
+function renderMemory(){
+  const c = document.getElementById('content');
+  if(store.loading.memory && !store.memories.length){ c.innerHTML = loadingHtml(); return; }
+  if(store.errors.memory){ c.innerHTML = errorHtml(store.errors.memory, 'loadMemory()'); return; }
+  let h = '<div class="page-hdr"><h2>Memory</h2></div>';
+  h += '<div style="display:flex;gap:8px;margin-bottom:16px">'+
+    '<input id="mem-search" placeholder="Search memory..." value="'+escHtml(store.memorySearch)+'" style="flex:1" onkeydown="if(event.key===\'Enter\')_memSearch()">'+
+    '<select id="mem-type" style="width:auto" onchange="_memSearch()"><option value="">All Types</option><option value="fact"'+(store.memoryType==='fact'?' selected':'')+'>Fact</option><option value="preference"'+(store.memoryType==='preference'?' selected':'')+'>Preference</option><option value="context"'+(store.memoryType==='context'?' selected':'')+'>Context</option><option value="skill"'+(store.memoryType==='skill'?' selected':'')+'>Skill</option></select>'+
+    '<button class="btn-outline btn-sm" onclick="_memSearch()">Search</button></div>';
+  if(!store.memories.length){ h += emptyHtml('No memories found','Memories are created as agents interact with users'); c.innerHTML = h; return; }
+  store.memories.forEach(m => {
+    h += '<div class="mem-card"><div class="mem-content"><span class="mem-type">'+escHtml(m.type||'memory')+'</span>'+
+      '<div class="mem-text">'+escHtml(m.content||m.text||'')+'</div>'+
+      '<div class="mem-meta">'+(m.pinned?'Pinned | ':'')+escHtml(m.created_at||'')+'</div></div>'+
+      '<div class="mem-actions"><button class="btn-outline btn-sm" onclick="_memPin(\''+m.id+'\')" title="Pin">'+(m.pinned?'\u2605':'\u2606')+'</button>'+
+      '<button class="btn-outline btn-sm" onclick="_memDel(\''+m.id+'\')" title="Delete">\u2715</button></div></div>';
+  });
+  c.innerHTML = h;
+}
+
+// ============ COSTS ============
+async function loadCosts(){
+  store.loading.costs = true; store.errors.costs = null; renderView();
+  try {
+    store.costs = await api('/api/costs?period='+store.costPeriod);
+    store.loading.costs = false;
+  } catch(e){ store.errors.costs = e.message; store.loading.costs = false; }
+  renderView();
+}
+window._setCostPeriod = function(v){ store.costPeriod = v; loadCosts(); };
+
+function renderCosts(){
+  const c = document.getElementById('content');
+  if(store.loading.costs){ c.innerHTML = loadingHtml(); return; }
+  if(store.errors.costs){ c.innerHTML = errorHtml(store.errors.costs, 'loadCosts()'); return; }
+  const co = store.costs || {};
+  const total = ((co.total_microdollars||0)/1e6).toFixed(4);
+  const reqs = co.total_requests || 0;
+  const inTok = (co.total_input_tokens||0).toLocaleString();
+  const outTok = (co.total_output_tokens||0).toLocaleString();
+
+  let h = '<div class="page-hdr"><h2>Costs</h2><div class="actions">'+
+    '<select style="width:auto" onchange="_setCostPeriod(this.value)">'+
+    '<option value="today"'+(store.costPeriod==='today'?' selected':'')+'>Today</option>'+
+    '<option value="7d"'+(store.costPeriod==='7d'?' selected':'')+'>Last 7 Days</option>'+
+    '<option value="30d"'+(store.costPeriod==='30d'?' selected':'')+'>Last 30 Days</option>'+
+    '</select></div></div>';
+  h += '<div class="stats-grid">'+
+    '<div class="stat-card"><div class="val">$'+total+'</div><div class="lbl">Total Cost</div></div>'+
+    '<div class="stat-card"><div class="val">'+reqs+'</div><div class="lbl">Requests</div></div>'+
+    '<div class="stat-card"><div class="val">'+inTok+'</div><div class="lbl">Input Tokens</div></div>'+
+    '<div class="stat-card"><div class="val">'+outTok+'</div><div class="lbl">Output Tokens</div></div></div>';
+
+  const models = co.by_model || [];
+  if(models.length){
+    let rows = '';
+    models.forEach(m => { rows += '<tr><td>'+escHtml(m.model||'')+'</td><td>$'+((m.cost_microdollars||0)/1e6).toFixed(4)+'</td><td>'+(m.requests||0)+'</td></tr>'; });
+    h += '<h3 style="margin-bottom:8px;font-size:1em">By Model</h3><table><thead><tr><th>Model</th><th>Cost</th><th>Requests</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+  c.innerHTML = h;
+}
+
+// ============ INTEGRATIONS ============
+const integrationsDef = [
+  { group:'LLM Providers', items:[
+    { id:'claude_subscription', name:'Claude Code (Subscription)', desc:'Auto-detected subscription', readonly:true, fields:[] },
+    { id:'anthropic', name:'Anthropic API', desc:'Claude via API key', fields:[{key:'api_key',label:'API Key',type:'password'}] },
+    { id:'openai', name:'OpenAI', desc:'GPT models via API key', fields:[{key:'api_key',label:'API Key',type:'password'}] },
+    { id:'ollama', name:'Ollama', desc:'Local LLM server', fields:[{key:'url',label:'URL',type:'text',placeholder:'http://localhost:11434'}] },
+  ]},
+  { group:'Messaging', items:[
+    { id:'telegram', name:'Telegram', desc:'Telegram bot integration', fields:[{key:'bot_token',label:'Bot Token',type:'password'},{key:'allowed_users',label:'Allowed Users (comma-separated IDs)',type:'text'}],
+      help:'Create a bot with @BotFather to get the token. Add user IDs to restrict access.' },
+    { id:'discord', name:'Discord', desc:'Discord bot integration', comingSoon:true, fields:[] },
+  ]},
+  { group:'Email', items:[
+    { id:'gmail', name:'Gmail / IMAP', desc:'Email via IMAP/SMTP', fields:[{key:'email',label:'Email',type:'email'},{key:'app_password',label:'App Password',type:'password'},{key:'imap_host',label:'IMAP Host',type:'text',placeholder:'imap.gmail.com'},{key:'smtp_host',label:'SMTP Host',type:'text',placeholder:'smtp.gmail.com'}],
+      help:'For Gmail, enable 2FA and create an App Password in your Google Account settings.' },
+  ]},
+  { group:'Services', items:[
+    { id:'browser', name:'Browser (Playwright)', desc:'Web browsing capabilities', fields:[{key:'headless',label:'Headless Mode',type:'checkbox'},{key:'allowed_domains',label:'Allowed Domains (comma-separated)',type:'text'}] },
+  ]},
+];
+
+async function loadIntegrations(){
+  store.loading.integrations = true; store.errors.integrations = null; renderView();
+  try {
+    const d = await api('/api/integrations');
+    store.integrations = d.integrations || d || [];
+    store.loading.integrations = false;
+  } catch(e){ store.errors.integrations = e.message; store.loading.integrations = false; }
+  renderView();
+}
+function getIntStatus(id){
+  const i = store.integrations.find(x => x.id === id);
+  return i ? (i.status || (i.configured ? 'connected' : 'disconnected')) : 'disconnected';
+}
+window._openInt = function(id){ store.openIntegration = store.openIntegration === id ? null : id; renderView(); };
+window._saveInt = function(id){
+  const def = integrationsDef.flatMap(g=>g.items).find(x=>x.id===id);
+  if(!def) return;
+  const data = {};
+  def.fields.forEach(f => {
+    const el = document.getElementById('int-'+id+'-'+f.key);
+    if(!el) return;
+    if(f.type==='checkbox') data[f.key] = el.checked;
+    else data[f.key] = el.value;
+  });
+  api('/api/integrations/'+id+'/configure', { method:'POST', body:JSON.stringify(data) })
+    .then(()=>{ toast('Saved','success'); loadIntegrations(); })
+    .catch(e=>toast('Error: '+e.message,'error'));
+};
+window._testInt = function(id){
+  api('/api/integrations/'+id+'/test', { method:'POST' })
+    .then(d=>{ toast(d.success!==false?'Connection successful':'Connection failed: '+(d.error||''),'success'); })
+    .catch(e=>toast('Error: '+e.message,'error'));
+};
+window._disconnectInt = function(id){
+  if(!confirm('Disconnect this integration?')) return;
+  api('/api/integrations/'+id, { method:'DELETE' })
+    .then(()=>{ toast('Disconnected','success'); loadIntegrations(); })
+    .catch(e=>toast('Error: '+e.message,'error'));
+};
+
+function renderIntegrations(){
+  const c = document.getElementById('content');
+  if(store.loading.integrations && !store.integrations.length){ c.innerHTML = loadingHtml(); return; }
+  if(store.errors.integrations){ c.innerHTML = errorHtml(store.errors.integrations, 'loadIntegrations()'); return; }
+  let h = '<div class="page-hdr"><h2>Integrations</h2></div>';
+  integrationsDef.forEach(g => {
+    h += '<div class="int-group"><h3>'+escHtml(g.group)+'</h3>';
+    g.items.forEach(item => {
+      const status = getIntStatus(item.id);
+      const isConn = status === 'connected';
+      const isOpen = store.openIntegration === item.id;
+      h += '<div class="int-card" onclick="_openInt(\''+item.id+'\')">'+
+        '<div class="status-dot '+(isConn?'connected':'disconnected')+'"></div>'+
+        '<div class="int-info"><div class="int-name">'+escHtml(item.name)+(item.comingSoon?' <span class="badge badge-info">Coming Soon</span>':'')+'</div><div class="int-desc">'+escHtml(item.desc)+'</div></div>'+
+        '<div class="int-arrow">'+(isOpen?'\u25B2':'\u25BC')+'</div></div>';
+      if(isOpen && !item.comingSoon){
+        h += '<div class="int-detail">';
+        if(item.readonly){
+          h += '<p style="color:var(--text-secondary);font-size:.9em">This integration is '+(isConn?'<span class="badge badge-success">detected</span>':'<span class="badge badge-info">not detected</span>')+'. It is automatically configured based on your environment.</p>';
+        } else {
+          const existing = store.integrations.find(x=>x.id===item.id) || {};
+          item.fields.forEach(f => {
+            h += '<div class="field-group"><label for="int-'+item.id+'-'+f.key+'">'+escHtml(f.label)+'</label>';
+            if(f.type==='checkbox'){
+              h += '<label class="toggle"><input type="checkbox" id="int-'+item.id+'-'+f.key+'"'+(existing[f.key]?' checked':'')+'><span class="slider"></span></label>';
+            } else if(f.type==='password'){
+              const masked = existing[f.key] ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' : '';
+              h += '<input type="password" id="int-'+item.id+'-'+f.key+'" placeholder="'+(masked||'Enter '+f.label)+'">';
+            } else {
+              h += '<input type="'+f.type+'" id="int-'+item.id+'-'+f.key+'" value="'+escHtml(existing[f.key]||'')+'" placeholder="'+(f.placeholder||'')+'">';
+            }
+            h += '</div>';
+          });
+          if(item.help) h += '<p class="help-text">'+escHtml(item.help)+'</p>';
+          h += '<div class="btn-row">'+
+            '<button class="btn-primary btn-sm" onclick="event.stopPropagation();_saveInt(\''+item.id+'\')">Save</button>'+
+            '<button class="btn-outline btn-sm" onclick="event.stopPropagation();_testInt(\''+item.id+'\')">Test Connection</button>'+
+            (isConn?'<button class="btn-danger btn-sm" onclick="event.stopPropagation();_disconnectInt(\''+item.id+'\')">Disconnect</button>':'')+
+          '</div>';
+        }
+        h += '</div>';
+      }
+    });
+    h += '</div>';
+  });
+  c.innerHTML = h;
+}
+
+// ============ SKILLS ============
+async function loadSkills(){
+  store.loading.skills = true; store.errors.skills = null; renderView();
+  try {
+    const d = await api('/api/skills');
+    store.skills = d.skills || d || [];
+    store.loading.skills = false;
+  } catch(e){ store.errors.skills = e.message; store.loading.skills = false; }
+  renderView();
+}
+window._toggleSkill = function(id, enabled){
+  api('/api/skills/'+id, { method:'PUT', body:JSON.stringify({ enabled }) })
+    .then(()=>{ toast(enabled?'Enabled':'Disabled','success'); loadSkills(); })
+    .catch(e=>toast('Error: '+e.message,'error'));
+};
+
+function renderSkills(){
+  const c = document.getElementById('content');
+  if(store.loading.skills){ c.innerHTML = loadingHtml(); return; }
+  if(store.errors.skills){ c.innerHTML = errorHtml(store.errors.skills, 'loadSkills()'); return; }
+  let h = '<div class="page-hdr"><h2>Skills</h2><div class="actions"><button class="btn-outline btn-sm" onclick="loadSkills()">Refresh</button></div></div>';
+  if(!store.skills.length){ h += emptyHtml('No skills installed','Skills extend agent capabilities'); c.innerHTML = h; return; }
+  store.skills.forEach(s => {
+    const en = s.enabled !== false;
+    h += '<div class="skill-card"><div class="skill-info"><div class="skill-name">'+escHtml(s.name||s.id||'')+'</div><div class="skill-desc">'+escHtml(s.description||'')+'</div></div>'+
+      '<label class="toggle"><input type="checkbox" '+(en?'checked':'')+' onchange="_toggleSkill(\''+s.id+'\',this.checked)"><span class="slider"></span></label></div>';
+  });
+  c.innerHTML = h;
+}
+
+// ============ LOGS ============
+async function loadLogs(){
+  store.loading.logs = true; store.errors.logs = null; renderView();
+  try {
+    let url = '/api/logs';
+    if(store.logLevel && store.logLevel !== 'ALL') url += '?level='+store.logLevel;
+    const d = await api(url);
+    store.logs = d.entries || d.logs || d || [];
+    store.loading.logs = false;
+  } catch(e){ store.errors.logs = e.message; store.loading.logs = false; }
+  renderView();
+}
+window._setLogLevel = function(v){ store.logLevel = v; loadLogs(); };
+
+function renderLogs(){
+  const c = document.getElementById('content');
+  if(store.loading.logs){ c.innerHTML = loadingHtml(); return; }
+  if(store.errors.logs){ c.innerHTML = errorHtml(store.errors.logs, 'loadLogs()'); return; }
+  let h = '<div class="page-hdr"><h2>Logs</h2><div class="actions">'+
+    '<select style="width:auto" onchange="_setLogLevel(this.value)">'+
+    '<option value="ALL"'+(store.logLevel==='ALL'?' selected':'')+'>All Levels</option>'+
+    '<option value="DEBUG"'+(store.logLevel==='DEBUG'?' selected':'')+'>Debug</option>'+
+    '<option value="INFO"'+(store.logLevel==='INFO'?' selected':'')+'>Info</option>'+
+    '<option value="WARNING"'+(store.logLevel==='WARNING'?' selected':'')+'>Warning</option>'+
+    '<option value="ERROR"'+(store.logLevel==='ERROR'?' selected':'')+'>Error</option>'+
+    '</select>'+
+    '<button class="btn-outline btn-sm" onclick="loadLogs()">Refresh</button></div></div>';
+  h += '<div class="log-container" id="log-container">';
+  if(!store.logs.length) h += '<div style="padding:20px;text-align:center;color:var(--text-muted)">No log entries</div>';
+  else {
+    store.logs.forEach(entry => {
+      let level = 'INFO';
+      let text = entry;
+      if(typeof entry === 'object'){ level = entry.level || 'INFO'; text = entry.message || entry.text || JSON.stringify(entry); }
+      else if(typeof entry === 'string'){
+        const m = entry.match(/\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b/);
+        if(m) level = m[1];
+      }
+      h += '<div class="log-entry '+level+'">'+escHtml(typeof text==='string'?text:JSON.stringify(text))+'</div>';
+    });
+  }
+  h += '</div>';
+  c.innerHTML = h;
+  const lc = document.getElementById('log-container');
+  if(lc) lc.scrollTop = lc.scrollHeight;
+}
+
+// ============ SETTINGS ============
+async function loadSettings(){
+  store.loading.settings = true; store.errors.settings = null; renderView();
+  try {
+    const [s, m] = await Promise.all([api('/api/settings'), api('/api/models').catch(()=>({models:[]}))]);
+    store.settings = s.settings || s || {};
+    store.models = m.models || m || [];
+    try { store.settingsStats = await api('/api/settings/stats'); } catch(e){ store.settingsStats = null; }
+    store.loading.settings = false;
+  } catch(e){ store.errors.settings = e.message; store.loading.settings = false; }
+  renderView();
+}
+window._saveSettings = function(){
+  const form = {};
+  const fields = document.querySelectorAll('[data-setting]');
+  fields.forEach(el => {
+    const key = el.dataset.setting;
+    if(el.type==='checkbox') form[key] = el.checked;
+    else if(el.type==='number') form[key] = Number(el.value);
+    else form[key] = el.value;
+  });
+  api('/api/settings', { method:'PUT', body:JSON.stringify(form) })
+    .then(()=>toast('Settings saved','success'))
+    .catch(e=>toast('Error: '+e.message,'error'));
+};
+window._backupSettings = function(){
+  api('/api/settings/backup', { method:'POST' })
+    .then(()=>toast('Backup created','success'))
+    .catch(e=>toast('Error: '+e.message,'error'));
+};
+window._exportConfig = function(){
+  api('/api/settings')
+    .then(d => {
+      const blob = new Blob([JSON.stringify(d,null,2)], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'nexmind-config.json';
+      a.click();
+    }).catch(e=>toast('Error: '+e.message,'error'));
+};
+window._resetDefaults = function(){
+  if(!confirm('Reset all settings to defaults?')) return;
+  api('/api/settings/reset', { method:'POST' })
+    .then(()=>{ toast('Reset to defaults','success'); loadSettings(); })
+    .catch(e=>toast('Error: '+e.message,'error'));
+};
+window._clearMemory = function(){
+  if(!confirm('This will permanently delete ALL stored memories. Continue?')) return;
+  api('/api/memory/clear', { method:'POST' })
+    .then(()=>toast('Memory cleared','success'))
+    .catch(e=>toast('Error: '+e.message,'error'));
+};
+window._factoryReset = function(){
+  const input = document.getElementById('factory-reset-input');
+  if(!input || input.value !== 'RESET'){ toast('Type RESET to confirm','error'); return; }
+  api('/api/settings/factory-reset', { method:'POST' })
+    .then(()=>{ toast('Factory reset complete','success'); location.reload(); })
+    .catch(e=>toast('Error: '+e.message,'error'));
+};
+
+function renderSettings(){
+  const c = document.getElementById('content');
+  if(store.loading.settings){ c.innerHTML = loadingHtml(); return; }
+  if(store.errors.settings){ c.innerHTML = errorHtml(store.errors.settings, 'loadSettings()'); return; }
+  const s = store.settings;
+  let modelOpts = '';
+  store.models.forEach(m => {
+    const mid = typeof m === 'string' ? m : m.id || m.name;
+    modelOpts += '<option value="'+escHtml(mid)+'"'+(s.default_model===mid?' selected':'')+'>'+escHtml(mid)+'</option>';
+  });
+  if(!modelOpts) modelOpts = '<option value="'+(s.default_model||'')+'">'+escHtml(s.default_model||'Default')+'</option>';
+
+  const themeVal = getTheme();
+  let h = '<div class="page-hdr"><h2>Settings</h2></div>';
+
+  // General
+  h += '<div class="settings-section"><h3>General</h3><div class="field-row">'+
+    '<div><label>Default Model</label><select data-setting="default_model">'+modelOpts+'</select></div>'+
+    '<div><label>Theme</label><select onchange="setTheme(this.value);this.dataset.setting=\'theme\'" data-setting="theme"><option value="dark"'+(themeVal==='dark'?' selected':'')+'>Dark</option><option value="light"'+(themeVal==='light'?' selected':'')+'>Light</option></select></div>'+
+  '</div></div>';
+
+  // Notifications
+  h += '<div class="settings-section"><h3>Notifications</h3>'+
+    '<div class="field-row"><div><label>Quiet Hours</label><div class="chk-row"><input type="checkbox" data-setting="quiet_hours_enabled"'+(s.quiet_hours_enabled?' checked':'')+'> <span>Enable Quiet Hours</span></div></div><div></div></div>'+
+    '<div class="field-row">'+
+      '<div><label>From</label><input type="time" data-setting="quiet_hours_from" value="'+(s.quiet_hours_from||'22:00')+'"></div>'+
+      '<div><label>To</label><input type="time" data-setting="quiet_hours_to" value="'+(s.quiet_hours_to||'08:00')+'"></div>'+
+    '</div>'+
+    '<div class="field-row full"><div><label>Timezone</label><input type="text" data-setting="quiet_hours_timezone" value="'+escHtml(s.quiet_hours_timezone||Intl.DateTimeFormat().resolvedOptions().timeZone)+'" placeholder="e.g. America/New_York"></div></div>'+
+    '<div class="chk-row"><input type="checkbox" data-setting="sound_on_approval"'+(s.sound_on_approval?' checked':'')+'> <span>Sound on approval request</span></div>'+
+    '<div class="chk-row"><input type="checkbox" data-setting="notify_task_completion"'+(s.notify_task_completion?' checked':'')+'> <span>Notify on task completion</span></div>'+
+    '<div class="chk-row"><input type="checkbox" data-setting="notify_errors"'+(s.notify_errors?' checked':'')+'> <span>Notify on errors</span></div>'+
+    '<div class="field-row full"><div><label>Budget Alert Threshold ($)</label><input type="number" data-setting="budget_alert_threshold" value="'+(s.budget_alert_threshold||10)+'" step="1" min="0"></div></div>'+
+  '</div>';
+
+  // Security
+  h += '<div class="settings-section"><h3>Security</h3>'+
+    '<div class="field-row"><div><label>Default Trust Level</label><select data-setting="default_trust_level">'+
+      '<option value="minimal"'+(s.default_trust_level==='minimal'?' selected':'')+'>Minimal</option>'+
+      '<option value="low"'+(s.default_trust_level==='low'?' selected':'')+'>Low</option>'+
+      '<option value="medium"'+(!s.default_trust_level||s.default_trust_level==='medium'?' selected':'')+'>Medium</option>'+
+      '<option value="high"'+(s.default_trust_level==='high'?' selected':'')+'>High</option>'+
+    '</select></div>'+
+    '<div><label>Approval Timeout (hours)</label><input type="number" data-setting="approval_timeout_hours" value="'+(s.approval_timeout_hours||24)+'" min="1" max="168"></div></div>'+
+    '<div class="chk-row"><input type="checkbox" data-setting="auto_approve_readonly"'+(s.auto_approve_readonly?' checked':'')+'> <span>Auto-approve read-only tools</span></div>'+
+    '<div class="chk-row"><input type="checkbox" checked disabled> <span>Always require approval for shell_exec (locked)</span></div>'+
+  '</div>';
+
+  // Browser
+  h += '<div class="settings-section"><h3>Browser</h3>'+
+    '<div class="chk-row"><input type="checkbox" data-setting="headless_mode"'+(s.headless_mode!==false?' checked':'')+'> <span>Headless mode</span></div>'+
+    '<div class="field-row">'+
+      '<div><label>Max Concurrent Pages</label><input type="number" data-setting="max_concurrent_pages" value="'+(s.max_concurrent_pages||3)+'" min="1" max="10"></div>'+
+      '<div><label>Navigation Timeout (seconds)</label><input type="number" data-setting="navigation_timeout" value="'+(s.navigation_timeout||30)+'" min="5" max="120"></div>'+
+    '</div></div>';
+
+  // Data
+  h += '<div class="settings-section"><h3>Data</h3>';
+  if(store.settingsStats){
+    const st = store.settingsStats;
+    h += '<div class="stats-grid" style="margin-bottom:16px">'+
+      '<div class="stat-card"><div class="val">'+(st.total_memories||0)+'</div><div class="lbl">Memories</div></div>'+
+      '<div class="stat-card"><div class="val">'+(st.total_conversations||0)+'</div><div class="lbl">Conversations</div></div>'+
+      '<div class="stat-card"><div class="val">'+(st.db_size_mb?st.db_size_mb.toFixed(1)+'MB':'N/A')+'</div><div class="lbl">Database Size</div></div>'+
+    '</div>';
+  }
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+    '<button class="btn-outline btn-sm" onclick="_backupSettings()">Backup</button>'+
+    '<button class="btn-outline btn-sm" onclick="_exportConfig()">Export Config</button>'+
+    '<button class="btn-outline btn-sm" onclick="_resetDefaults()">Reset to Defaults</button>'+
+  '</div></div>';
+
+  // Danger Zone
+  h += '<div class="settings-section"><div class="danger-zone"><h3>Danger Zone</h3>'+
+    '<div style="display:flex;gap:8px;margin-bottom:12px"><button class="btn-danger btn-sm" onclick="_clearMemory()">Clear All Memory</button></div>'+
+    '<label>Factory Reset (type RESET to confirm)</label>'+
+    '<div style="display:flex;gap:8px;margin-top:4px"><input type="text" id="factory-reset-input" placeholder="Type RESET" style="width:200px"><button class="btn-danger btn-sm" onclick="_factoryReset()">Factory Reset</button></div>'+
+  '</div></div>';
+
+  // Save
+  h += '<div style="margin-top:20px"><button class="btn-primary" onclick="_saveSettings()">Save All Settings</button></div>';
+
+  c.innerHTML = h;
+}
+
+// ============ HELPERS ============
+function loadingHtml(){ return '<div class="loading-wrap"><div class="spinner"></div><div>Loading...</div></div>'; }
+function emptyHtml(title, subtitle){ return '<div class="empty-state"><div class="icon">&#128196;</div><p><strong>'+(title||'Nothing here')+'</strong><br>'+(subtitle||'')+'</p></div>'; }
+function errorHtml(msg, retryFn){ return '<div class="error-state"><p>Failed to load</p><p style="font-size:.85em;color:var(--text-secondary)">'+escHtml(msg||'Unknown error')+'</p>'+(retryFn?'<button class="btn-outline btn-sm" onclick="'+retryFn+'">Retry</button>':'')+'</div>'; }
+
+// ============ RENDER ============
+function renderView(){
+  switch(store.view){
+    case 'chat': renderChat(); break;
+    case 'agents': renderAgents(); break;
+    case 'tasks': renderTasks(); break;
+    case 'approvals': renderApprovals(); break;
+    case 'memory': renderMemory(); break;
+    case 'costs': renderCosts(); break;
+    case 'integrations': renderIntegrations(); break;
+    case 'skills': renderSkills(); break;
+    case 'logs': renderLogs(); break;
+    case 'settings': renderSettings(); break;
+  }
+}
+
+function renderAll(){
+  renderSidebar();
+  renderView();
+}
+
+// Expose loaders globally for onclick handlers
+window.loadAgents = loadAgents;
+window.loadTasks = loadTasks;
+window.loadApprovals = loadApprovals;
+window.loadMemory = loadMemory;
+window.loadCosts = loadCosts;
+window.loadIntegrations = loadIntegrations;
+window.loadSkills = loadSkills;
+window.loadLogs = loadLogs;
+window.loadSettings = loadSettings;
+window.setTheme = setTheme;
+
+// ============ INIT ============
+function init(){
+  initRoute();
+  renderAll();
+  checkHealth();
+  wsConnect();
+  // Load initial data for current view
+  loadDataForView(store.view);
+  // Periodically check health
+  setInterval(checkHealth, 30000);
+  // Load approvals for badge count
+  loadApprovals();
+}
+
+function loadDataForView(v){
+  switch(v){
+    case 'agents': loadAgents(); break;
+    case 'tasks': loadTasks(); break;
+    case 'approvals': loadApprovals(); break;
+    case 'memory': loadMemory(); break;
+    case 'costs': loadCosts(); break;
+    case 'integrations': loadIntegrations(); break;
+    case 'skills': loadSkills(); break;
+    case 'logs': loadLogs(); break;
+    case 'settings': loadSettings(); break;
+  }
+}
+
+// Re-load data on nav
+const origRenderAll = renderAll;
+window.addEventListener('hashchange', () => { loadDataForView(store.view); });
+
+// Also load data when clicking nav
+document.getElementById('sidebar').addEventListener('click', function(e){
+  const item = e.target.closest('[data-nav]');
+  if(item) setTimeout(() => loadDataForView(store.view), 0);
+}, true);
+
+init();
+
+})();
+</script>
 </body>
 </html>

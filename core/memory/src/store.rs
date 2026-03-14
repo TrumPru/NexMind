@@ -233,6 +233,76 @@ impl MemoryStoreImpl {
         Ok(())
     }
 
+    /// List memories without search (for browsing). Returns recent memories.
+    pub fn list(
+        &self,
+        workspace_id: &str,
+        memory_types: &[MemoryType],
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<Memory>, usize), MemoryError> {
+        let conn = self.conn()?;
+
+        let type_filter = if memory_types.is_empty() {
+            String::new()
+        } else {
+            let placeholders: Vec<String> = memory_types
+                .iter()
+                .map(|t| format!("'{}'", t.as_str()))
+                .collect();
+            format!(" AND memory_type IN ({})", placeholders.join(","))
+        };
+
+        // Get total count
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM memories WHERE workspace_id = ?1{}",
+            type_filter
+        );
+        let total: usize = conn
+            .query_row(&count_sql, params![workspace_id], |row| row.get(0))
+            .map_err(|e| MemoryError::Storage(e.to_string()))?;
+
+        // Get page
+        let sql = format!(
+            "SELECT id, workspace_id, agent_id, memory_type, content, embedding, importance, source, source_task_id, access_policy, metadata, expires_at, created_at, updated_at
+             FROM memories
+             WHERE workspace_id = ?1{}
+             ORDER BY importance DESC, created_at DESC
+             LIMIT ?2 OFFSET ?3",
+            type_filter
+        );
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| MemoryError::Storage(e.to_string()))?;
+
+        let memories: Vec<Memory> = stmt
+            .query_map(params![workspace_id, limit, offset], |row| {
+                let embedding_blob: Option<Vec<u8>> = row.get(5)?;
+                Ok(Memory {
+                    id: row.get(0)?,
+                    workspace_id: row.get(1)?,
+                    agent_id: row.get(2)?,
+                    memory_type: MemoryType::from_str(&row.get::<_, String>(3)?).unwrap_or(MemoryType::Semantic),
+                    content: row.get(4)?,
+                    embedding: embedding_blob.map(|b| blob_to_embedding(&b)),
+                    importance: row.get(6)?,
+                    source: MemorySource::from_str(&row.get::<_, String>(7)?).unwrap_or(MemorySource::System),
+                    source_task_id: row.get(8)?,
+                    access_policy: AccessPolicy::from_str(&row.get::<_, String>(9)?).unwrap_or(AccessPolicy::Workspace),
+                    metadata: row.get::<_, Option<String>>(10)?.and_then(|s| serde_json::from_str(&s).ok()),
+                    expires_at: row.get(11)?,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
+                })
+            })
+            .map_err(|e| MemoryError::Storage(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok((memories, total))
+    }
+
     // ── Read Path ───────────────────────────────────────────────────
 
     /// Retrieve relevant memories using hybrid BM25 + vector search with RRF merge.

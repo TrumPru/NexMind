@@ -32,6 +32,7 @@ axum = { workspace = true }
 tower = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
+rusqlite = { workspace = true }
 
 [build-dependencies]
 tonic-build = { workspace = true }

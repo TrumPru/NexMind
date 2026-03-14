@@ -575,7 +575,7 @@ async fn main() -> Result<()> {
             event_bus.clone(),
             db.clone(),
         )
-        .with_memory(memory_store)
+        .with_memory(memory_store.clone())
         .with_tools(tool_registry)
         .with_approvals(approval_manager.clone())
         .with_cost_tracker(cost_tracker.clone()),
@@ -684,6 +684,8 @@ async fn main() -> Result<()> {
         event_bus: event_bus.clone(),
         start_time,
         skill_registry: skill_registry.clone(),
+        memory_store: memory_store.clone(),
+        model_router: model_router.clone(),
     });
 
     let http_router = http_api::build_router(http_state);

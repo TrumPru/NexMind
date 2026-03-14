@@ -60,9 +60,8 @@ mod tests {
     #[test]
     fn test_dashboard_html_contains_expected_content() {
         assert!(DASHBOARD_HTML.contains("NexMind"));
-        assert!(DASHBOARD_HTML.contains("alpine"));
-        assert!(DASHBOARD_HTML.contains("pico"));
         assert!(DASHBOARD_HTML.contains("/api/"));
+        assert!(DASHBOARD_HTML.contains("--bg-primary"));
     }
 
     #[test]
