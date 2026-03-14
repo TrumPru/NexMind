@@ -1,4 +1,4 @@
-![NexMind] (images/logo.png)
+![NexMind](images/logo.png)
 # NexMind
 **NexMind - AI Agent (coming soon)**
 ## NexMind is an AI agent with vast capabilities, lives directly on your computer or server, and performs assigned tasks through your preferred messenger.
