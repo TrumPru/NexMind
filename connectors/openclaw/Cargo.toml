@@ -1,0 +1,21 @@
+[package]
+name = "nexmind-openclaw"
+version = "0.1.0"
+edition = "2021"
+description = "OpenClaw external agent connector for NexMind"
+
+[dependencies]
+nexmind-agent-engine = { path = "../../core/agent-engine" }
+nexmind-model-router = { path = "../../core/model-router" }
+nexmind-tool-runtime = { path = "../../core/tool-runtime" }
+nexmind-event-bus = { path = "../../core/event-bus" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+ulid = { workspace = true }
