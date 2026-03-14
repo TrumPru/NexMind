@@ -465,7 +465,13 @@ fn init_tool_registry(
         registry.register(Box::new(BrowserExtractTextTool::new(browser_manager.clone())));
         registry.register(Box::new(BrowserExtractLinksTool::new(browser_manager.clone())));
         registry.register(Box::new(BrowserClickTool::new(browser_manager.clone())));
-        registry.register(Box::new(BrowserTypeTool::new(browser_manager)));
+        registry.register(Box::new(BrowserTypeTool::new(browser_manager.clone())));
+        registry.register(Box::new(BrowserExecuteJsTool::new(browser_manager.clone())));
+        registry.register(Box::new(BrowserWaitForTool::new(browser_manager.clone())));
+        registry.register(Box::new(BrowserScrollTool::new(browser_manager.clone())));
+        registry.register(Box::new(BrowserBackTool::new(browser_manager.clone())));
+        registry.register(Box::new(BrowserSelectOptionTool::new(browser_manager.clone())));
+        registry.register(Box::new(BrowserExtractHtmlTool::new(browser_manager)));
     }
 
     // OpenClaw external agent tools (if gateway is configured via env vars)
