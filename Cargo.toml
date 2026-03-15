@@ -12,6 +12,7 @@ members = [
     "core/workflow-engine",
     "core/scheduler",
     "core/skill-registry",
+    "core/config",
     "connectors/telegram",
     "connectors/openclaw",
     "apps/daemon",
@@ -53,6 +54,7 @@ nexmind-connector = { path = "core/connector" }
 nexmind-workflow-engine = { path = "core/workflow-engine" }
 nexmind-scheduler = { path = "core/scheduler" }
 nexmind-skill-registry = { path = "core/skill-registry" }
+nexmind-config = { path = "core/config" }
 serde_yaml = "0.9"
 nexmind-telegram = { path = "connectors/telegram" }
 nexmind-openclaw = { path = "connectors/openclaw" }

@@ -23,16 +23,24 @@ use proto::*;
 #[command(name = "nexmind-daemon", about = "NexMind daemon process")]
 struct Args {
     /// Path to the Unix domain socket (or TCP port for Windows)
-    #[arg(long, default_value = "127.0.0.1:19384")]
-    socket_path: String,
+    #[arg(long)]
+    socket_path: Option<String>,
 
     /// Data directory for databases and state
-    #[arg(long, default_value = "./data")]
-    data_dir: String,
+    #[arg(long)]
+    data_dir: Option<String>,
 
     /// Workspace directory for file operations
-    #[arg(long, default_value = "./data/workspace")]
+    #[arg(long)]
+    workspace_dir: Option<String>,
+}
+
+/// Resolved arguments with config fallbacks applied.
+struct ResolvedArgs {
+    socket_path: String,
+    data_dir: String,
     workspace_dir: String,
+    config: nexmind_config::NexMindConfig,
 }
 
 struct NexMindService {
@@ -556,7 +564,25 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let args = Args::parse();
+    // Load config from ~/.nexmind/ (also injects .env secrets into process env)
+    let config = nexmind_config::NexMindConfig::load();
+
+    let cli_args = Args::parse();
+
+    // Resolve: CLI args > config.toml > hardcoded defaults
+    let args = ResolvedArgs {
+        socket_path: cli_args
+            .socket_path
+            .unwrap_or_else(|| config.daemon.socket_addr()),
+        data_dir: cli_args.data_dir.unwrap_or_else(|| {
+            config.paths.data_dir_resolved().to_string_lossy().into_owned()
+        }),
+        workspace_dir: cli_args.workspace_dir.unwrap_or_else(|| {
+            config.paths.workspace_dir_resolved().to_string_lossy().into_owned()
+        }),
+        config,
+    };
+
     let start_time = Instant::now();
 
     info!("nexmind daemon starting");
@@ -628,9 +654,16 @@ async fn main() -> Result<()> {
     // Initialize agent registry and create default agent
     let agent_registry = Arc::new(nexmind_agent_engine::AgentRegistry::new(db.clone()));
 
-    // Auto-select the best available model for the default agent
-    let default_model = model_router.select_default_model();
-    info!(model = %default_model, "default agent using auto-selected model");
+    // Select default model: config override or auto-detect
+    let default_model = if args.config.model.default != "auto" {
+        let model = args.config.model.default.clone();
+        info!(model = %model, "default agent using configured model");
+        model
+    } else {
+        let model = model_router.select_default_model();
+        info!(model = %model, "default agent using auto-selected model");
+        model
+    };
 
     let mut default_agent = nexmind_agent_engine::AgentDefinition::default_chat("default");
     default_agent.model.primary = default_model;
@@ -682,8 +715,13 @@ async fn main() -> Result<()> {
     let skills_dir = std::path::PathBuf::from(&args.data_dir).join("skills");
     let skill_registry = Arc::new(nexmind_skill_registry::SkillRegistry::new(skills_dir));
 
-    // Load built-in skills
-    let builtin_dir = std::path::PathBuf::from("skills/builtin");
+    // Load built-in skills (try config path first, then local relative path for dev)
+    let config_builtin_dir = args.config.paths.builtin_skills_dir_resolved();
+    let builtin_dir = if config_builtin_dir.exists() {
+        config_builtin_dir
+    } else {
+        std::path::PathBuf::from("skills/builtin")
+    };
     if builtin_dir.exists() {
         for entry in std::fs::read_dir(&builtin_dir).into_iter().flatten().flatten() {
             let path = entry.path();
