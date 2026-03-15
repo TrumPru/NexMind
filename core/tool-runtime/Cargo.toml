@@ -9,6 +9,7 @@ nexmind-event-bus = { workspace = true }
 nexmind-memory = { workspace = true }
 nexmind-storage = { workspace = true }
 nexmind-scheduler = { workspace = true }
+nexmind-agent-comm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

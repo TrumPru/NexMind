@@ -2033,6 +2033,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexmind-agent-comm"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "nexmind-event-bus",
+ "nexmind-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "ulid",
+]
+
+[[package]]
 name = "nexmind-agent-engine"
 version = "0.1.0"
 dependencies = [
@@ -2040,6 +2057,7 @@ dependencies = [
  "chrono",
  "futures",
  "hex",
+ "nexmind-agent-comm",
  "nexmind-connector",
  "nexmind-event-bus",
  "nexmind-memory",
@@ -2120,6 +2138,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "nexmind-agent-comm",
  "nexmind-agent-engine",
  "nexmind-config",
  "nexmind-connector",
@@ -2329,6 +2348,7 @@ dependencies = [
  "imap",
  "lettre",
  "native-tls",
+ "nexmind-agent-comm",
  "nexmind-event-bus",
  "nexmind-memory",
  "nexmind-model-router",

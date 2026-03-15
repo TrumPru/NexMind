@@ -58,6 +58,10 @@ struct NexMindService {
     scheduler: Arc<nexmind_scheduler::SchedulerImpl>,
     approval_manager: Arc<nexmind_agent_engine::approval::ApprovalManager>,
     cost_tracker: Arc<nexmind_agent_engine::cost::CostTracker>,
+    #[allow(dead_code)]
+    team_registry: Arc<nexmind_agent_engine::TeamRegistry>,
+    #[allow(dead_code)]
+    mailbox_router: Arc<nexmind_agent_comm::MailboxRouter>,
 }
 
 #[tonic::async_trait]
@@ -408,6 +412,156 @@ impl NexMind for NexMindService {
             by_model,
         }))
     }
+
+    // ── Teams ───────────────────────────────────────────────────────
+
+    type RunTeamStream = tokio_stream::wrappers::ReceiverStream<Result<TeamEvent, Status>>;
+
+    async fn list_teams(
+        &self,
+        request: Request<ListTeamsRequest>,
+    ) -> Result<Response<TeamList>, Status> {
+        let req = request.into_inner();
+        let workspace_id = if req.workspace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.workspace_id
+        };
+        let all_teams = self.team_registry.list(&workspace_id)
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let teams = all_teams
+            .into_iter()
+            .map(|t| TeamSummary {
+                id: t.id.clone(),
+                name: t.name.clone(),
+                pattern: format!("{:?}", t.pattern),
+                member_count: t.members.len() as i32,
+                description: t.description.clone().unwrap_or_default(),
+            })
+            .collect();
+        Ok(Response::new(TeamList { teams }))
+    }
+
+    async fn run_team(
+        &self,
+        request: Request<RunTeamRequest>,
+    ) -> Result<Response<Self::RunTeamStream>, Status> {
+        let req = request.into_inner();
+        let team_def = self
+            .team_registry
+            .get(&req.team_id)
+            .map_err(|e| Status::not_found(e.to_string()))?;
+
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+
+        let agent_registry = self.agent_registry.clone();
+        let agent_runtime = self.agent_runtime.clone();
+        let mailbox_router = self.mailbox_router.clone();
+        let team_registry = self.team_registry.clone();
+        let event_bus = self.event_bus.clone();
+        let workspace_id = if req.workspace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.workspace_id
+        };
+
+        tokio::spawn(async move {
+            let _ = tx
+                .send(Ok(TeamEvent {
+                    team_id: team_def.id.clone(),
+                    event_type: "started".into(),
+                    data: serde_json::json!({"input": req.input}).to_string(),
+                }))
+                .await;
+
+            let orchestrator = nexmind_agent_engine::TeamOrchestrator::new(
+                agent_runtime,
+                agent_registry,
+                team_registry,
+                event_bus,
+            )
+            .with_mailbox_router(mailbox_router);
+
+            match orchestrator.run_team(&team_def.id, &req.input, &workspace_id).await {
+                Ok(result) => {
+                    let _ = tx
+                        .send(Ok(TeamEvent {
+                            team_id: team_def.id.clone(),
+                            event_type: "completed".into(),
+                            data: serde_json::json!({
+                                "outputs": result.outputs,
+                                "duration_ms": result.duration_ms,
+                                "members_completed": result.members_completed,
+                                "members_failed": result.members_failed,
+                            })
+                            .to_string(),
+                        }))
+                        .await;
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(Ok(TeamEvent {
+                            team_id: team_def.id.clone(),
+                            event_type: "failed".into(),
+                            data: serde_json::json!({"error": e.to_string()}).to_string(),
+                        }))
+                        .await;
+                }
+            }
+        });
+
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+
+    async fn send_agent_message(
+        &self,
+        request: Request<AgentMessageRequest>,
+    ) -> Result<Response<AgentMessageResponse>, Status> {
+        let req = request.into_inner();
+        let msg = nexmind_agent_comm::AgentMessage::direct(
+            &req.sender_id,
+            &req.recipient_id,
+            &req.content,
+        )
+        .with_team(&req.team_id);
+
+        let msg_id = msg.id.clone();
+        self.mailbox_router
+            .send(msg)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(Response::new(AgentMessageResponse {
+            sent: true,
+            message_id: msg_id,
+        }))
+    }
+
+    async fn get_team_messages(
+        &self,
+        request: Request<TeamMessagesQuery>,
+    ) -> Result<Response<TeamMessageList>, Status> {
+        let req = request.into_inner();
+        let limit = if req.limit <= 0 { 50 } else { req.limit as usize };
+        let messages = self
+            .mailbox_router
+            .get_history(&req.task_id, limit)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        let entries = messages
+            .into_iter()
+            .map(|m| TeamMessageEntry {
+                id: m.id,
+                from_agent: m.sender_id,
+                to_agent: m.recipient_id.unwrap_or_default(),
+                msg_type: format!("{:?}", m.message_type),
+                content: m.content,
+                timestamp: m.timestamp,
+            })
+            .collect();
+
+        Ok(Response::new(TeamMessageList { messages: entries }))
+    }
 }
 
 /// Initialize the model router with auto-detected providers.
@@ -488,10 +642,18 @@ fn init_tool_registry(
     workspace_path: &std::path::Path,
     db: Arc<nexmind_storage::Database>,
     scheduler: Arc<nexmind_scheduler::SchedulerImpl>,
+    mailbox_router: Arc<nexmind_agent_comm::MailboxRouter>,
 ) -> nexmind_tool_runtime::ToolRegistry {
     use nexmind_tool_runtime::tools::*;
 
     let mut registry = nexmind_tool_runtime::ToolRegistry::new(event_bus, audit);
+
+    // Agent communication tools
+    registry.register(Box::new(AgentSendMessageTool::new(mailbox_router.clone())));
+    registry.register(Box::new(AgentReceiveMessagesTool::new(mailbox_router.clone())));
+    registry.register(Box::new(AgentSendFileTool::new(mailbox_router.clone())));
+    registry.register(Box::new(AgentListTeamTool::new(mailbox_router)));
+    info!("agent communication tools registered");
 
     registry.register(Box::new(MemoryReadTool::new(memory_store.clone())));
     registry.register(Box::new(MemoryWriteTool::new(memory_store)));
@@ -646,16 +808,24 @@ async fn main() -> Result<()> {
     let scheduler = Arc::new(nexmind_scheduler::SchedulerImpl::new(db.clone()));
     info!("scheduler initialized");
 
-    // Initialize tool registry
+    // Initialize mailbox router for agent communication
+    let mailbox_router = Arc::new(nexmind_agent_comm::MailboxRouter::new(
+        db.clone(),
+        event_bus.clone(),
+    ));
+    info!("mailbox router initialized");
+
+    // Initialize tool registry (mutable — delegate tool added after runtime init)
     let workspace_path = std::path::PathBuf::from(&args.workspace_dir);
-    let tool_registry = Arc::new(init_tool_registry(
+    let mut tool_registry = init_tool_registry(
         event_bus.clone(),
         audit,
         memory_store.clone(),
         &workspace_path,
         db.clone(),
         scheduler.clone(),
-    ));
+        mailbox_router.clone(),
+    );
 
     // Initialize agent registry and create default agent
     let agent_registry = Arc::new(nexmind_agent_engine::AgentRegistry::new(db.clone()));
@@ -677,6 +847,38 @@ async fn main() -> Result<()> {
     match agent_registry.create(&default_agent) {
         Ok(_) => info!("default agent created"),
         Err(e) => info!("default agent: {}", e),
+    }
+
+    // Register collaborative team agent presets
+    {
+        use nexmind_agent_engine::team::*;
+        let team_agents = vec![
+            planner_agent("default"),
+            coder_agent("default"),
+            reviewer_agent("default"),
+            data_researcher_agent("default"),
+            analyst_agent("default"),
+            reporter_agent("default"),
+        ];
+        for agent_def in &team_agents {
+            match agent_registry.create(agent_def) {
+                Ok(_) => info!(agent_id = %agent_def.id, "team agent registered"),
+                Err(e) => info!(agent_id = %agent_def.id, "team agent: {}", e),
+            }
+        }
+
+        // Register team presets
+        let team_registry = nexmind_agent_engine::TeamRegistry::new(db.clone());
+        let coding = coding_team("default");
+        match team_registry.create(&coding) {
+            Ok(_) => info!("coding team preset registered"),
+            Err(e) => info!("coding team: {}", e),
+        }
+        let analysis = analysis_team("default");
+        match team_registry.create(&analysis) {
+            Ok(_) => info!("analysis team preset registered"),
+            Err(e) => info!("analysis team: {}", e),
+        }
     }
 
     // Register OpenClaw external agent if configured
@@ -701,7 +903,34 @@ async fn main() -> Result<()> {
     ));
     info!("cost tracker initialized");
 
-    // Initialize agent runtime with memory, tools, approvals, and cost tracking
+    // Two-phase init for delegate tool:
+    // 1. Create a lightweight "executor runtime" (without tools) for AgentDelegateTaskTool
+    // 2. Register delegate tool in tool_registry (still mutable)
+    // 3. Wrap tool_registry in Arc and create the full runtime
+    let executor_runtime = Arc::new(
+        nexmind_agent_engine::AgentRuntime::new(
+            model_router.clone(),
+            event_bus.clone(),
+            db.clone(),
+        )
+        .with_memory(memory_store.clone())
+        .with_approvals(approval_manager.clone())
+        .with_cost_tracker(cost_tracker.clone())
+        .with_registry(agent_registry.clone()),
+    );
+
+    // Register delegate tool using executor runtime
+    {
+        use nexmind_tool_runtime::tools::AgentDelegateTaskTool;
+        tool_registry.register(Box::new(AgentDelegateTaskTool::new(
+            mailbox_router.clone(),
+            executor_runtime,
+        )));
+        info!("agent_delegate_task tool registered");
+    }
+
+    // Now wrap in Arc and build full runtime
+    let tool_registry = Arc::new(tool_registry);
     let agent_runtime = Arc::new(
         nexmind_agent_engine::AgentRuntime::new(
             model_router.clone(),
@@ -711,7 +940,8 @@ async fn main() -> Result<()> {
         .with_memory(memory_store.clone())
         .with_tools(tool_registry)
         .with_approvals(approval_manager.clone())
-        .with_cost_tracker(cost_tracker.clone()),
+        .with_cost_tracker(cost_tracker.clone())
+        .with_registry(agent_registry.clone()),
     );
 
     // Stable session ID for this daemon instance
@@ -819,6 +1049,8 @@ async fn main() -> Result<()> {
     let dashboard_token = dashboard::DashboardServer::generate_token();
     info!("Dashboard: http://localhost:19385/?token={}", dashboard_token);
 
+    let team_registry = Arc::new(nexmind_agent_engine::TeamRegistry::new(db.clone()));
+
     let http_state = Arc::new(http_api::AppState {
         db: db.clone(),
         agent_registry: agent_registry.clone(),
@@ -834,6 +1066,8 @@ async fn main() -> Result<()> {
         session_id: Arc::new(std::sync::Mutex::new(session_id.clone())),
         current_agent_id: Arc::new(std::sync::Mutex::new("agt_default_chat".into())),
         workspace_path: workspace_path.clone(),
+        team_registry: team_registry.clone(),
+        mailbox_router: mailbox_router.clone(),
     });
 
     let http_router = http_api::build_router(http_state);
@@ -856,6 +1090,8 @@ async fn main() -> Result<()> {
         scheduler,
         approval_manager,
         cost_tracker,
+        team_registry,
+        mailbox_router,
     };
 
     let addr: std::net::SocketAddr = args.socket_path.parse()?;

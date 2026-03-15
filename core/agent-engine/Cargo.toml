@@ -7,6 +7,7 @@ edition = "2021"
 nexmind-storage = { workspace = true }
 nexmind-event-bus = { workspace = true }
 nexmind-security = { workspace = true }
+nexmind-agent-comm = { workspace = true }
 nexmind-model-router = { workspace = true }
 nexmind-memory = { workspace = true }
 nexmind-tool-runtime = { workspace = true }

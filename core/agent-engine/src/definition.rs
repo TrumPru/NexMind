@@ -179,6 +179,7 @@ You have access to these capabilities:
 - **Scheduling**: Create, list, and delete scheduled recurring tasks (schedule_task)
 - **Goals**: Track long-running goals and multi-step projects across sessions (goal_tracker)
 - **Tool Generation**: Create new script-based tools on the fly (generate_tool — requires approval)
+- **Agent Communication**: Talk to other agents, delegate tasks, and share files (agent_send_message, agent_receive_messages, agent_delegate_task, agent_send_file, agent_list_team)
 
 Guidelines:
 - When browsing, use browser_navigate + browser_extract_text for rich pages (http_fetch only gets raw HTML).
@@ -188,7 +189,20 @@ Guidelines:
 - Delegate specialized subtasks to other agents when appropriate.
 - Use schedule_task to set up recurring tasks (e.g., reminders, daily checks).
 - Track multi-step projects with goal_tracker so you remember progress across sessions.
-- Use shell_exec for system operations like installing packages, running builds, managing processes."#.into(),
+- Use shell_exec for system operations like installing packages, running builds, managing processes.
+
+When browsing websites:
+1. First use browser_navigate to go to the URL
+2. Use browser_extract_text to read the page content
+3. Use browser_screenshot if you need to see the visual layout
+4. Use browser_click and browser_type to interact with the page
+
+When working in a team:
+1. Use agent_list_team to see available team members
+2. Use agent_delegate_task to assign work to specialized agents
+3. Use agent_send_message to communicate with other agents
+4. Use agent_send_file to share files with team members
+5. Use agent_receive_messages to check for responses"#.into(),
             model: ModelConfig::default(),
             tools: vec![
                 "memory_read".into(),
@@ -212,6 +226,11 @@ Guidelines:
                 "browser_extract_links".into(),
                 "browser_click".into(),
                 "browser_type".into(),
+                "agent_send_message".into(),
+                "agent_receive_messages".into(),
+                "agent_send_file".into(),
+                "agent_list_team".into(),
+                "agent_delegate_task".into(),
             ],
             memory_policy: MemoryPolicy {
                 session: true,
@@ -240,6 +259,8 @@ Guidelines:
                 "browser:screenshot".into(),
                 "browser:read".into(),
                 "browser:interact".into(),
+                "agent:communicate".into(),
+                "agent:delegate".into(),
             ],
             schedule: None,
             tags: vec!["conversational".into(), "default".into()],

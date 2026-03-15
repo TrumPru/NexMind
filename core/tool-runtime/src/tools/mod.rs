@@ -13,6 +13,7 @@ pub mod delegate;
 pub mod db_query;
 pub mod goal_tracker;
 pub mod schedule_task;
+pub mod agent_comm;
 #[cfg(feature = "browser")]
 pub mod browser;
 #[cfg(feature = "email")]
@@ -35,6 +36,10 @@ pub use delegate::DelegateTool;
 pub use db_query::DbQueryTool;
 pub use goal_tracker::GoalTrackerTool;
 pub use schedule_task::ScheduleTaskTool;
+pub use agent_comm::{
+    AgentSendMessageTool, AgentReceiveMessagesTool, AgentSendFileTool,
+    AgentListTeamTool, AgentDelegateTaskTool,
+};
 #[cfg(feature = "browser")]
 pub use browser::manager::{BrowserConfig, BrowserManager, SharedBrowserManager};
 #[cfg(feature = "browser")]

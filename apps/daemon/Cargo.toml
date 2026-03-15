@@ -9,6 +9,7 @@ nexmind-security = { workspace = true }
 nexmind-event-bus = { workspace = true }
 nexmind-model-router = { workspace = true }
 nexmind-agent-engine = { workspace = true }
+nexmind-agent-comm = { workspace = true }
 nexmind-memory = { workspace = true }
 nexmind-tool-runtime = { workspace = true }
 nexmind-connector = { workspace = true }

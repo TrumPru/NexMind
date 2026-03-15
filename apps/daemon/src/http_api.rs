@@ -35,6 +35,8 @@ pub struct AppState {
     pub session_id: Arc<std::sync::Mutex<String>>,
     pub current_agent_id: Arc<std::sync::Mutex<String>>,
     pub workspace_path: std::path::PathBuf,
+    pub team_registry: Arc<nexmind_agent_engine::TeamRegistry>,
+    pub mailbox_router: Arc<nexmind_agent_comm::MailboxRouter>,
 }
 
 #[derive(Deserialize)]
@@ -94,6 +96,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/settings", get(get_settings).put(save_settings))
         .route("/api/settings/stats", get(get_stats))
         .route("/api/settings/backup", post(create_backup))
+        // Teams
+        .route("/api/teams", get(list_teams).post(create_team))
+        .route("/api/teams/{id}", get(get_team).delete(delete_team))
+        .route("/api/teams/{id}/messages", get(get_team_messages))
         // Integrations
         .route("/api/integrations", get(list_integrations))
         .route("/api/integrations/{id}/configure", post(configure_integration))
@@ -1331,6 +1337,203 @@ async fn delete_integration(
     Ok(Json(ActionResult {
         success: true,
         message: format!("Integration {} disconnected. Restart daemon to apply.", id),
+    }))
+}
+
+// ── Teams ─────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct TeamInfo {
+    id: String,
+    name: String,
+    pattern: String,
+    member_count: usize,
+    description: String,
+    members: Vec<TeamMemberResponse>,
+}
+
+#[derive(Serialize)]
+struct TeamMemberResponse {
+    agent_id: String,
+    role: String,
+}
+
+#[derive(Serialize)]
+struct TeamsResponse {
+    teams: Vec<TeamInfo>,
+}
+
+async fn list_teams(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<TeamsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    check_token(&q, &state.dashboard_token)?;
+
+    let teams = state.team_registry.list("default").unwrap_or_default();
+    let infos = teams
+        .into_iter()
+        .map(|t| TeamInfo {
+            id: t.id,
+            name: t.name,
+            pattern: format!("{:?}", t.pattern),
+            member_count: t.members.len(),
+            description: t.description.unwrap_or_default(),
+            members: t
+                .members
+                .iter()
+                .map(|m| TeamMemberResponse {
+                    agent_id: m.agent_id.clone(),
+                    role: m.role.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    Ok(Json(TeamsResponse { teams: infos }))
+}
+
+async fn get_team(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Result<Json<TeamInfo>, (StatusCode, Json<ErrorResponse>)> {
+    check_token(&q, &state.dashboard_token)?;
+
+    let team = state.team_registry.get(&id).map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+
+    Ok(Json(TeamInfo {
+        id: team.id,
+        name: team.name,
+        pattern: format!("{:?}", team.pattern),
+        member_count: team.members.len(),
+        description: team.description.unwrap_or_default(),
+        members: team
+            .members
+            .iter()
+            .map(|m| TeamMemberResponse {
+                agent_id: m.agent_id.clone(),
+                role: m.role.clone(),
+            })
+            .collect(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct CreateTeamRequest {
+    definition_json: String,
+}
+
+async fn create_team(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TokenQuery>,
+    Json(body): Json<CreateTeamRequest>,
+) -> Result<Json<ActionResult>, (StatusCode, Json<ErrorResponse>)> {
+    check_token(&q, &state.dashboard_token)?;
+
+    let team_def: nexmind_agent_engine::TeamDefinition =
+        serde_json::from_str(&body.definition_json).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Invalid team definition: {}", e),
+                }),
+            )
+        })?;
+
+    match state.team_registry.create(&team_def) {
+        Ok(id) => Ok(Json(ActionResult {
+            success: true,
+            message: id,
+        })),
+        Err(e) => Ok(Json(ActionResult {
+            success: false,
+            message: e.to_string(),
+        })),
+    }
+}
+
+async fn delete_team(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<TokenQuery>,
+    Path(id): Path<String>,
+) -> Result<Json<ActionResult>, (StatusCode, Json<ErrorResponse>)> {
+    check_token(&q, &state.dashboard_token)?;
+
+    match state.team_registry.delete(&id) {
+        Ok(()) => Ok(Json(ActionResult {
+            success: true,
+            message: "Team deleted".into(),
+        })),
+        Err(e) => Ok(Json(ActionResult {
+            success: false,
+            message: e.to_string(),
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+struct TeamMessagesParams {
+    token: Option<String>,
+    task_id: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct TeamMessageResponse {
+    id: String,
+    from_agent: String,
+    to_agent: Option<String>,
+    msg_type: String,
+    content: String,
+    timestamp: String,
+}
+
+#[derive(Serialize)]
+struct TeamMessagesResponse {
+    messages: Vec<TeamMessageResponse>,
+}
+
+async fn get_team_messages(
+    State(state): State<Arc<AppState>>,
+    Query(mq): Query<TeamMessagesParams>,
+    Path(team_id): Path<String>,
+) -> Result<Json<TeamMessagesResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let q = TokenQuery {
+        token: mq.token.clone(),
+    };
+    check_token(&q, &state.dashboard_token)?;
+
+    let task_id = mq.task_id.as_deref().unwrap_or("default");
+    let limit = mq.limit.unwrap_or(50);
+
+    let messages = state
+        .mailbox_router
+        .get_history(task_id, limit)
+        .unwrap_or_default();
+
+    // Filter to messages for this team
+    let team_messages: Vec<TeamMessageResponse> = messages
+        .into_iter()
+        .filter(|m| m.team_id.as_deref() == Some(team_id.as_str()))
+        .map(|m| TeamMessageResponse {
+            id: m.id,
+            from_agent: m.sender_id,
+            to_agent: m.recipient_id,
+            msg_type: m.message_type.to_string(),
+            content: m.content,
+            timestamp: m.timestamp,
+        })
+        .collect();
+
+    Ok(Json(TeamMessagesResponse {
+        messages: team_messages,
     }))
 }
 
