@@ -145,6 +145,59 @@ enum BrowserAction {
 
     /// Close the browser
     Close,
+
+    /// Execute JavaScript on the current page
+    Js {
+        /// JavaScript code to execute
+        js: String,
+    },
+
+    /// Wait for a CSS selector to appear on the page
+    WaitFor {
+        /// CSS selector to wait for
+        selector: String,
+
+        /// Timeout in milliseconds (default: 10000)
+        #[arg(long, default_value = "10000")]
+        timeout_ms: u64,
+    },
+
+    /// Scroll the page
+    Scroll {
+        /// Direction: up, down, top, bottom, element
+        direction: String,
+
+        /// Pixels to scroll (for up/down)
+        #[arg(long)]
+        amount: Option<i32>,
+
+        /// CSS selector (for element scroll)
+        #[arg(long)]
+        selector: Option<String>,
+    },
+
+    /// Go back in browser history
+    Back,
+
+    /// Select a dropdown option
+    Select {
+        /// CSS selector of the <select> element
+        selector: String,
+
+        /// Value or text to select
+        value: String,
+
+        /// Select by 'value' or 'text' (default: value)
+        #[arg(long, default_value = "value")]
+        by: String,
+    },
+
+    /// Extract HTML from the current page
+    Html {
+        /// CSS selector to extract HTML from (default: full page)
+        #[arg(long)]
+        selector: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1432,6 +1485,50 @@ async fn browser_command(action: BrowserAction, data_dir: &str) -> Result<()> {
         BrowserAction::Close => {
             browser.close().await.map_err(|e| anyhow::anyhow!("{}", e))?;
             println!("Browser closed.");
+        }
+
+        BrowserAction::Js { js } => {
+            let result = browser.execute_js(&js).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        }
+
+        BrowserAction::WaitFor { selector, timeout_ms } => {
+            println!("Waiting for '{}'...", selector);
+            let found = browser
+                .wait_for_selector(&selector, timeout_ms)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("Found: {}", found);
+        }
+
+        BrowserAction::Scroll { direction, amount, selector } => {
+            browser
+                .scroll(&direction, amount, selector.as_deref())
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("Scrolled: {}", direction);
+        }
+
+        BrowserAction::Back => {
+            let info = browser.go_back().await.map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("Title: {}", info.title);
+            println!("URL:   {}", info.url);
+        }
+
+        BrowserAction::Select { selector, value, by } => {
+            browser
+                .select_option(&selector, &value, &by)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("Selected '{}' in {}", value, selector);
+        }
+
+        BrowserAction::Html { selector } => {
+            let html = browser
+                .extract_html(selector.as_deref())
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("{}", html);
         }
     }
 

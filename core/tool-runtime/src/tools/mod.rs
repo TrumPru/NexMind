@@ -41,6 +41,8 @@ pub use browser::manager::{BrowserConfig, BrowserManager, SharedBrowserManager};
 pub use browser::tools::{
     BrowserNavigateTool, BrowserScreenshotTool, BrowserExtractTextTool,
     BrowserExtractLinksTool, BrowserClickTool, BrowserTypeTool,
+    BrowserExecuteJsTool, BrowserWaitForTool, BrowserScrollTool,
+    BrowserBackTool, BrowserSelectOptionTool, BrowserExtractHtmlTool,
 };
 #[cfg(feature = "email")]
 pub use email::{
